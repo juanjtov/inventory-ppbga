@@ -20,7 +20,14 @@ export default function LoginPage() {
       await login(email, password);
       navigate('/pos');
     } catch (err) {
-      setError(err.message || 'Credenciales invalidas');
+      const msg = err.message || '';
+      if (!err.response && (msg === 'Network Error' || msg.includes('network'))) {
+        setError('No se pudo conectar con el servidor. Intenta de nuevo.');
+      } else if (msg.toLowerCase().includes('invalid login credentials')) {
+        setError('Correo o contraseña incorrectos');
+      } else {
+        setError('Credenciales inválidas');
+      }
     } finally {
       setLoading(false);
     }
