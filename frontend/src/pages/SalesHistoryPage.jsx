@@ -45,7 +45,7 @@ export default function SalesHistoryPage() {
   const [loading, setLoading] = useState(true);
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
-  const [expandedId, setExpandedId] = useState(null);
+  const [expandedIds, setExpandedIds] = useState(new Set());
   const [expandedSaleData, setExpandedSaleData] = useState({});
   const [voidModal, setVoidModal] = useState({ open: false, saleId: null });
   const [voidReason, setVoidReason] = useState('');
@@ -207,7 +207,7 @@ export default function SalesHistoryPage() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {sales.map(sale => {
-                  const isExpanded = expandedId === sale.id;
+                  const isExpanded = expandedIds.has(sale.id);
                   const saleDetail = expandedSaleData[sale.id];
                   const itemsList = saleDetail?.items || sale.items;
                   const productsSummary = itemsList
@@ -219,10 +219,11 @@ export default function SalesHistoryPage() {
                       <tr
                         className="hover:bg-gray-50 cursor-pointer"
                         onClick={async () => {
+                          const newSet = new Set(expandedIds);
                           if (isExpanded) {
-                            setExpandedId(null);
+                            newSet.delete(sale.id);
                           } else {
-                            setExpandedId(sale.id);
+                            newSet.add(sale.id);
                             if (!expandedSaleData[sale.id]) {
                               try {
                                 const detailRes = await api.get(`/sales/${sale.id}`);
@@ -230,6 +231,7 @@ export default function SalesHistoryPage() {
                               } catch {}
                             }
                           }
+                          setExpandedIds(newSet);
                         }}
                       >
                         <td className="px-4 py-3 text-gray-400">

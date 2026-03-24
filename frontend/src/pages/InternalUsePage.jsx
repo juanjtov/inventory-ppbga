@@ -14,7 +14,7 @@ export default function InternalUsePage() {
   const [submitting, setSubmitting] = useState(false);
 
   const [productSearch, setProductSearch] = useState('');
-  const [showDropdown, setShowDropdown] = useState(false);
+
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [quantity, setQuantity] = useState(1);
   const [reason, setReason] = useState('');
@@ -40,8 +40,7 @@ export default function InternalUsePage() {
 
   function handleSelectProduct(product) {
     setSelectedProduct(product);
-    setProductSearch(product.name);
-    setShowDropdown(false);
+    setProductSearch('');
     setQuantity(1);
   }
 
@@ -109,7 +108,7 @@ export default function InternalUsePage() {
 
       <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-5">
         {/* Product searchable selector */}
-        <div className="relative">
+        <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Producto
           </label>
@@ -121,34 +120,34 @@ export default function InternalUsePage() {
               value={productSearch}
               onChange={(e) => {
                 setProductSearch(e.target.value);
-                setShowDropdown(true);
-                if (selectedProduct && e.target.value !== selectedProduct.name) {
+                if (selectedProduct) {
                   setSelectedProduct(null);
                 }
               }}
-              onFocus={() => setShowDropdown(true)}
               className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-premier-700 focus:border-transparent"
             />
           </div>
-          {showDropdown && productSearch && (
-            <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-              {filteredProducts.length === 0 ? (
-                <p className="px-4 py-3 text-sm text-gray-400">Sin resultados</p>
-              ) : (
-                filteredProducts.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => handleSelectProduct(p)}
-                    className="w-full text-left px-4 py-2.5 hover:bg-gray-50 flex items-center justify-between text-sm"
-                  >
-                    <span className="font-medium text-gray-900">{p.name}</span>
-                    <span className="text-gray-500">Stock: {p.stock}</span>
-                  </button>
-                ))
-              )}
-            </div>
-          )}
+          <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-lg mt-1">
+            {filteredProducts.length === 0 ? (
+              <p className="px-4 py-3 text-sm text-gray-400">Sin resultados</p>
+            ) : (
+              filteredProducts.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => handleSelectProduct(p)}
+                  className={`w-full text-left px-4 py-2.5 hover:bg-gray-50 flex items-center justify-between text-sm border-b border-gray-100 last:border-b-0 ${
+                    selectedProduct?.id === p.id
+                      ? 'bg-premier-50 border-l-2 border-l-premier-500'
+                      : ''
+                  }`}
+                >
+                  <span className="font-medium text-gray-900">{p.name}</span>
+                  <span className="text-xs text-gray-500">Stock: {p.stock}</span>
+                </button>
+              ))
+            )}
+          </div>
         </div>
 
         {/* Selected product info */}
