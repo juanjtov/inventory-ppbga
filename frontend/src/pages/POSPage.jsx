@@ -313,7 +313,7 @@ export default function POSPage() {
       {/* Mobile cart FAB */}
       <button
         onClick={() => setShowCart(true)}
-        className="md:hidden fixed bottom-6 right-6 z-30 bg-premier-700 text-white rounded-full w-14 h-14 flex items-center justify-center shadow-lg hover:bg-premier-800 transition-colors"
+        className="md:hidden fixed bottom-20 right-6 z-30 bg-premier-700 text-white rounded-full w-14 h-14 flex items-center justify-center shadow-lg hover:bg-premier-800 transition-colors"
       >
         <ShoppingCart className="w-6 h-6" />
         {itemCount > 0 && (
