@@ -280,14 +280,14 @@ export default function CatalogPage() {
           <thead>
             <tr className="border-b border-gray-100 text-left text-xs text-gray-500 uppercase tracking-wider">
               <th className="px-4 py-3">Nombre</th>
-              <th className="px-4 py-3">Categoria</th>
-              <th className="px-4 py-3">Proveedor</th>
-              <th className="px-4 py-3">Tipo</th>
+              <th className="px-4 py-3 hidden md:table-cell">Categoria</th>
+              <th className="px-4 py-3 hidden lg:table-cell">Proveedor</th>
+              <th className="px-4 py-3 hidden md:table-cell">Tipo</th>
               <th className="px-4 py-3 text-right">P. Venta</th>
-              <th className="px-4 py-3 text-right">P. Compra</th>
+              <th className="px-4 py-3 text-right hidden lg:table-cell">P. Compra</th>
               <th className="px-4 py-3 text-center">Stock</th>
-              <th className="px-4 py-3 text-center">Umbral</th>
-              <th className="px-4 py-3 text-center">Activo</th>
+              <th className="px-4 py-3 text-center hidden lg:table-cell">Umbral</th>
+              <th className="px-4 py-3 text-center hidden md:table-cell">Activo</th>
               {isOwner && <th className="px-4 py-3 text-center">Acciones</th>}
             </tr>
           </thead>
@@ -299,9 +299,9 @@ export default function CatalogPage() {
                 onClick={() => isOwner && openEdit(p)}
               >
                 <td className="px-4 py-3 font-medium text-gray-900">{p.name}</td>
-                <td className="px-4 py-3 text-gray-600">{getCategoryName(p.category_id)}</td>
-                <td className="px-4 py-3 text-gray-600">{getSupplierName(p.supplier_id)}</td>
-                <td className="px-4 py-3">
+                <td className="px-4 py-3 text-gray-600 hidden md:table-cell">{getCategoryName(p.category_id)}</td>
+                <td className="px-4 py-3 text-gray-600 hidden lg:table-cell">{getSupplierName(p.supplier_id)}</td>
+                <td className="px-4 py-3 hidden md:table-cell">
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                     p.type === 'service'
                       ? 'bg-blue-50 text-blue-700'
@@ -311,7 +311,7 @@ export default function CatalogPage() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-right text-gray-900">{formatCOP(p.sale_price)}</td>
-                <td className="px-4 py-3 text-right text-gray-600">{formatCOP(p.purchase_price)}</td>
+                <td className="px-4 py-3 text-right text-gray-600 hidden lg:table-cell">{formatCOP(p.purchase_price)}</td>
                 <td className="px-4 py-3 text-center">
                   {p.type === 'service' ? '—' : (
                     <span className={p.stock <= (p.min_stock_alert || 0) ? 'text-red-600 font-bold' : ''}>
@@ -319,8 +319,8 @@ export default function CatalogPage() {
                     </span>
                   )}
                 </td>
-                <td className="px-4 py-3 text-center text-gray-500">{p.min_stock_alert ?? '—'}</td>
-                <td className="px-4 py-3 text-center">
+                <td className="px-4 py-3 text-center text-gray-500 hidden lg:table-cell">{p.min_stock_alert ?? '—'}</td>
+                <td className="px-4 py-3 text-center hidden md:table-cell">
                   {isOwner ? (
                     <button
                       onClick={(e) => { e.stopPropagation(); toggleActive(p); }}

@@ -1,10 +1,11 @@
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useState, useEffect } from 'react';
 import api from '../../api/client';
 import {
   ShoppingCart, Package, Users, Calculator, BarChart3,
   BookOpen, UserCog, AlertTriangle, ReceiptText, LogOut,
+  Menu, X,
 } from 'lucide-react';
 
 const navItems = [
@@ -22,13 +23,20 @@ const navItems = [
 export default function Sidebar() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [alertCount, setAlertCount] = useState(0);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
     api.get('/products/low-stock')
       .then(res => setAlertCount(res.data.length))
       .catch(() => {});
   }, []);
+
+  // Close drawer on route change
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname]);
 
   const handleLogout = async () => {
     await logout();
@@ -37,20 +45,26 @@ export default function Sidebar() {
 
   const filteredItems = navItems.filter(item => item.roles.includes(user?.role));
 
-  return (
-    <aside className="w-60 bg-white border-r border-gray-200 flex flex-col min-h-screen">
+  const sidebarContent = (
+    <>
       {/* Logo */}
-      <div className="p-5 border-b border-gray-100">
+      <div className="p-5 border-b border-gray-100 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-premier-700 rounded-lg flex items-center justify-center text-white font-bold text-sm">
             PP
           </div>
           <span className="text-premier-700 font-bold text-sm">PREMIER PADEL</span>
         </div>
+        <button
+          onClick={() => setMobileOpen(false)}
+          className="md:hidden text-gray-400 hover:text-gray-600"
+        >
+          <X className="w-5 h-5" />
+        </button>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-3 space-y-1">
+      <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
         {filteredItems.map(item => (
           <NavLink
             key={item.path}
@@ -94,6 +108,43 @@ export default function Sidebar() {
           </button>
         </div>
       </div>
-    </aside>
+    </>
+  );
+
+  return (
+    <>
+      {/* Mobile top bar */}
+      <div className="md:hidden fixed top-0 left-0 right-0 z-30 bg-white border-b border-gray-200 flex items-center gap-3 px-4 h-14">
+        <button onClick={() => setMobileOpen(true)} className="text-gray-600">
+          <Menu className="w-6 h-6" />
+        </button>
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 bg-premier-700 rounded-lg flex items-center justify-center text-white font-bold text-xs">
+            PP
+          </div>
+          <span className="text-premier-700 font-bold text-sm">PREMIER PADEL</span>
+        </div>
+      </div>
+
+      {/* Mobile drawer overlay */}
+      {mobileOpen && (
+        <div
+          className="md:hidden fixed inset-0 z-40 bg-black/50"
+          onClick={() => setMobileOpen(false)}
+        >
+          <aside
+            className="w-72 bg-white flex flex-col h-full"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {sidebarContent}
+          </aside>
+        </div>
+      )}
+
+      {/* Desktop sidebar */}
+      <aside className="hidden md:flex w-60 bg-white border-r border-gray-200 flex-col min-h-screen">
+        {sidebarContent}
+      </aside>
+    </>
   );
 }

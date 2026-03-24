@@ -13,7 +13,7 @@ from app.routers import (
     audit_log,
 )
 
-app = FastAPI(title="Premier Padel BGA - Inventario", version="1.0.0")
+app = FastAPI(title="Premier Padel BGA - Inventario", version="1.0.0", redirect_slashes=False)
 
 app.add_middleware(
     CORSMiddleware,

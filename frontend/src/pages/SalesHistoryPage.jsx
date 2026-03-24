@@ -140,7 +140,7 @@ export default function SalesHistoryPage() {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8">
+    <div className="max-w-7xl mx-auto">
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Historial de Ventas</h1>
 
       {/* Filters */}
@@ -197,10 +197,10 @@ export default function SalesHistoryPage() {
                 <tr>
                   <th className="px-4 py-3 font-medium w-8"></th>
                   <th className="px-4 py-3 font-medium">Fecha</th>
-                  <th className="px-4 py-3 font-medium">Vendedor</th>
-                  <th className="px-4 py-3 font-medium">Productos</th>
+                  <th className="px-4 py-3 font-medium hidden lg:table-cell">Vendedor</th>
+                  <th className="px-4 py-3 font-medium hidden md:table-cell">Productos</th>
                   <th className="px-4 py-3 font-medium text-right">Total</th>
-                  <th className="px-4 py-3 font-medium">Metodo</th>
+                  <th className="px-4 py-3 font-medium hidden md:table-cell">Metodo</th>
                   <th className="px-4 py-3 font-medium">Estado</th>
                   <th className="px-4 py-3 font-medium">Acciones</th>
                 </tr>
@@ -238,10 +238,10 @@ export default function SalesHistoryPage() {
                           {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                         </td>
                         <td className="px-4 py-3">{formatDate(sale.created_at)}</td>
-                        <td className="px-4 py-3">{sale.user_name ?? '-'}</td>
-                        <td className="px-4 py-3 max-w-[200px] truncate">{productsSummary}</td>
+                        <td className="px-4 py-3 hidden lg:table-cell">{sale.user_name ?? '-'}</td>
+                        <td className="px-4 py-3 max-w-[200px] truncate hidden md:table-cell">{productsSummary}</td>
                         <td className="px-4 py-3 text-right font-medium">{formatCOP(sale.total)}</td>
-                        <td className="px-4 py-3 capitalize">{sale.payment_method}</td>
+                        <td className="px-4 py-3 capitalize hidden md:table-cell">{sale.payment_method}</td>
                         <td className="px-4 py-3"><StatusBadge status={sale.status} /></td>
                         <td className="px-4 py-3">
                           <div className="flex gap-2" onClick={e => e.stopPropagation()}>

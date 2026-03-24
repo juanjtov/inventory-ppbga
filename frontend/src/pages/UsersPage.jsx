@@ -155,10 +155,10 @@ export default function UsersPage() {
           <thead>
             <tr className="border-b border-gray-100 text-left text-xs text-gray-500 uppercase tracking-wider">
               <th className="px-4 py-3">Nombre</th>
-              <th className="px-4 py-3">Email</th>
+              <th className="px-4 py-3 hidden md:table-cell">Email</th>
               <th className="px-4 py-3">Rol</th>
-              <th className="px-4 py-3 text-center">Estado</th>
-              <th className="px-4 py-3">Fecha</th>
+              <th className="px-4 py-3 text-center hidden md:table-cell">Estado</th>
+              <th className="px-4 py-3 hidden lg:table-cell">Fecha</th>
               <th className="px-4 py-3 text-center">Acciones</th>
             </tr>
           </thead>
@@ -178,13 +178,13 @@ export default function UsersPage() {
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{u.email}</td>
+                  <td className="px-4 py-3 text-gray-600 hidden md:table-cell">{u.email}</td>
                   <td className="px-4 py-3">
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ROLE_COLORS[u.role] || ROLE_COLORS.worker}`}>
                       {ROLE_LABELS[u.role] || u.role}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-center">
+                  <td className="px-4 py-3 text-center hidden md:table-cell">
                     {isSelf ? (
                       <span className="text-xs text-green-600">Activo</span>
                     ) : (
@@ -196,7 +196,7 @@ export default function UsersPage() {
                       </button>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-gray-500 text-xs">
+                  <td className="px-4 py-3 text-gray-500 text-xs hidden lg:table-cell">
                     {u.created_at
                       ? new Date(u.created_at).toLocaleDateString('es-CO')
                       : '—'}

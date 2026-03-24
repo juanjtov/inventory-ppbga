@@ -34,7 +34,7 @@ export default function AlertsPage() {
 
   if (products.length === 0) {
     return (
-      <div className="max-w-7xl mx-auto px-4 py-8">
+      <div className="max-w-7xl mx-auto">
         <h1 className="text-2xl font-bold text-gray-900 mb-6">Alertas de Stock</h1>
         <div className="flex flex-col items-center justify-center py-24 text-gray-400">
           <Package className="w-16 h-16 mb-4" />
@@ -46,7 +46,7 @@ export default function AlertsPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8">
+    <div className="max-w-7xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Alertas de Stock</h1>
         <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-sm font-medium">

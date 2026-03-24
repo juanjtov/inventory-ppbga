@@ -113,9 +113,9 @@ export default function InventoryPage() {
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
                 <th className="text-left px-4 py-3 font-medium text-gray-500">Producto</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Categoria</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Proveedor</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-500">Precio Venta</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-500 hidden md:table-cell">Categoria</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-500 hidden lg:table-cell">Proveedor</th>
+                <th className="text-right px-4 py-3 font-medium text-gray-500 hidden md:table-cell">Precio Venta</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-500">Stock</th>
                 <th className="text-center px-4 py-3 font-medium text-gray-500">Estado</th>
                 {isPrivileged && (
@@ -127,9 +127,9 @@ export default function InventoryPage() {
               {filtered.map((p) => (
                 <tr key={p.id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-3 font-medium text-gray-900">{p.name}</td>
-                  <td className="px-4 py-3 text-gray-600">{p.category_name || '-'}</td>
-                  <td className="px-4 py-3 text-gray-600">{p.supplier_name || '-'}</td>
-                  <td className="px-4 py-3 text-right text-gray-900">{formatCOP(p.sale_price)}</td>
+                  <td className="px-4 py-3 text-gray-600 hidden md:table-cell">{p.category_name || '-'}</td>
+                  <td className="px-4 py-3 text-gray-600 hidden lg:table-cell">{p.supplier_name || '-'}</td>
+                  <td className="px-4 py-3 text-right text-gray-900 hidden md:table-cell">{formatCOP(p.sale_price)}</td>
                   <td className="px-4 py-3 text-right text-gray-900">
                     {p.type === 'service' ? '-' : p.stock}
                   </td>

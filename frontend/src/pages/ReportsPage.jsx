@@ -35,10 +35,10 @@ export default function ReportsPage() {
   const [activeTab, setActiveTab] = useState('Ventas');
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8">
+    <div className="max-w-7xl mx-auto">
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Reportes</h1>
 
-      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-8 w-fit">
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-8 w-fit overflow-x-auto">
         {TABS.map(tab => (
           <button
             key={tab}
@@ -297,10 +297,10 @@ function InventarioTab() {
             <tr>
               <th className="px-6 py-3 font-medium">Producto</th>
               <th className="px-6 py-3 font-medium text-right">Stock</th>
-              <th className="px-6 py-3 font-medium text-right">Precio Venta</th>
-              <th className="px-6 py-3 font-medium text-right">Precio Compra</th>
+              <th className="px-6 py-3 font-medium text-right hidden md:table-cell">Precio Venta</th>
+              <th className="px-6 py-3 font-medium text-right hidden md:table-cell">Precio Compra</th>
               <th className="px-6 py-3 font-medium text-right">Valor Venta Total</th>
-              <th className="px-6 py-3 font-medium text-right">Valor Compra Total</th>
+              <th className="px-6 py-3 font-medium text-right hidden md:table-cell">Valor Compra Total</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -308,16 +308,17 @@ function InventarioTab() {
               <tr key={p.product_id} className={`hover:bg-gray-50 ${p.stock === 0 ? 'bg-red-50 text-red-700' : ''}`}>
                 <td className="px-6 py-3 font-medium">{p.name}</td>
                 <td className={`px-6 py-3 text-right font-semibold ${p.stock === 0 ? 'text-red-600' : ''}`}>{p.stock}</td>
-                <td className="px-6 py-3 text-right">{formatCOP(p.sale_price)}</td>
-                <td className="px-6 py-3 text-right">{formatCOP(p.purchase_price)}</td>
+                <td className="px-6 py-3 text-right hidden md:table-cell">{formatCOP(p.sale_price)}</td>
+                <td className="px-6 py-3 text-right hidden md:table-cell">{formatCOP(p.purchase_price)}</td>
                 <td className="px-6 py-3 text-right">{formatCOP(p.total_sale_value)}</td>
-                <td className="px-6 py-3 text-right">{formatCOP(p.total_purchase_value)}</td>
+                <td className="px-6 py-3 text-right hidden md:table-cell">{formatCOP(p.total_purchase_value)}</td>
               </tr>
             ))}
             <tr className="bg-gray-100 font-bold">
-              <td className="px-6 py-3" colSpan={4}>Total</td>
+              <td className="px-6 py-3 md:hidden" colSpan={2}>Total</td>
+              <td className="px-6 py-3 hidden md:table-cell" colSpan={4}>Total</td>
               <td className="px-6 py-3 text-right">{formatCOP(grandTotalSale)}</td>
-              <td className="px-6 py-3 text-right">{formatCOP(grandTotalPurchase)}</td>
+              <td className="px-6 py-3 text-right hidden md:table-cell">{formatCOP(grandTotalPurchase)}</td>
             </tr>
           </tbody>
         </table>
@@ -382,10 +383,10 @@ function ReconciliacionTab() {
               <thead className="bg-gray-50 text-gray-500 text-left">
                 <tr>
                   <th className="px-6 py-3 font-medium">Producto</th>
-                  <th className="px-6 py-3 font-medium text-right">Vendido</th>
-                  <th className="px-6 py-3 font-medium text-right">Ingresado</th>
-                  <th className="px-6 py-3 font-medium text-right">Uso Interno</th>
-                  <th className="px-6 py-3 font-medium text-right">Stock Esperado</th>
+                  <th className="px-6 py-3 font-medium text-right hidden md:table-cell">Vendido</th>
+                  <th className="px-6 py-3 font-medium text-right hidden md:table-cell">Ingresado</th>
+                  <th className="px-6 py-3 font-medium text-right hidden lg:table-cell">Uso Interno</th>
+                  <th className="px-6 py-3 font-medium text-right hidden md:table-cell">Stock Esperado</th>
                   <th className="px-6 py-3 font-medium text-right">Stock Actual</th>
                   <th className="px-6 py-3 font-medium text-right">Diferencia</th>
                 </tr>
@@ -394,10 +395,10 @@ function ReconciliacionTab() {
                 {data.map(r => (
                   <tr key={r.product_id ?? r.name} className={`hover:bg-gray-50 ${r.difference !== 0 ? 'bg-red-50' : ''}`}>
                     <td className="px-6 py-3 font-medium text-gray-900">{r.name}</td>
-                    <td className="px-6 py-3 text-right">{r.total_sold}</td>
-                    <td className="px-6 py-3 text-right">{r.total_entered}</td>
-                    <td className="px-6 py-3 text-right">{r.total_internal_use}</td>
-                    <td className="px-6 py-3 text-right">{r.expected_stock}</td>
+                    <td className="px-6 py-3 text-right hidden md:table-cell">{r.total_sold}</td>
+                    <td className="px-6 py-3 text-right hidden md:table-cell">{r.total_entered}</td>
+                    <td className="px-6 py-3 text-right hidden lg:table-cell">{r.total_internal_use}</td>
+                    <td className="px-6 py-3 text-right hidden md:table-cell">{r.expected_stock}</td>
                     <td className="px-6 py-3 text-right">{r.actual_stock}</td>
                     <td className={`px-6 py-3 text-right font-semibold ${r.difference !== 0 ? 'text-red-600' : 'text-green-600'}`}>
                       {r.difference}

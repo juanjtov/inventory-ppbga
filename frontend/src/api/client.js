@@ -6,10 +6,6 @@ const api = axios.create({
 });
 
 api.interceptors.request.use(async (config) => {
-  // Ensure trailing slash to avoid CORS-breaking 307 redirects
-  if (config.url && !config.url.endsWith('/') && !config.url.includes('?')) {
-    config.url = config.url + '/';
-  }
   const { data: { session } } = await supabase.auth.getSession();
   if (session?.access_token) {
     config.headers.Authorization = `Bearer ${session.access_token}`;
@@ -20,9 +16,8 @@ api.interceptors.request.use(async (config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 && !error.config?.url?.includes('/auth/me')) {
       supabase.auth.signOut();
-      window.location.href = '/login';
     }
     return Promise.reject(error);
   }
