@@ -11,7 +11,7 @@ const PAYMENT_METHODS = [
   { key: 'efectivo', label: 'Efectivo', icon: Banknote },
   { key: 'datafono', label: 'Datafono', icon: CreditCard },
   { key: 'transferencia', label: 'Transferencia', icon: ArrowRightLeft },
-  { key: 'fiado', label: 'Fiado', icon: UserCheck },
+  { key: 'fiado', label: 'Por cobrar', icon: UserCheck },
 ];
 
 export default function POSPage() {
@@ -90,7 +90,7 @@ export default function POSPage() {
   async function handleConfirmSale() {
     if (itemCount === 0) return;
     if (paymentMethod === 'fiado' && !clientName.trim()) {
-      addToast('Ingresa el nombre del cliente para fiado', 'error');
+      addToast('Ingresa el nombre del cliente para venta por cobrar', 'error');
       return;
     }
 
@@ -279,7 +279,7 @@ export default function POSPage() {
             ))}
           </div>
 
-          {/* Client name for Fiado */}
+          {/* Client name for Por cobrar */}
           {paymentMethod === 'fiado' && (
             <input
               type="text"

@@ -8,7 +8,7 @@ export const PAYMENT_METHODS = [
   { value: 'efectivo', label: 'Efectivo' },
   { value: 'datafono', label: 'Datáfono' },
   { value: 'transferencia', label: 'Transferencia' },
-  { value: 'fiado', label: 'Fiado' },
+  { value: 'fiado', label: 'Por cobrar' },
 ];
 
 export const SALE_STATUSES = {

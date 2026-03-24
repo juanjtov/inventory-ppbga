@@ -92,7 +92,7 @@ export default function CashClosingPage() {
     { label: 'Efectivo', value: data.total_cash },
     { label: 'Datafono', value: data.total_datafono },
     { label: 'Transferencia', value: data.total_transfer },
-    { label: 'Fiado', value: data.total_fiado },
+    { label: 'Por cobrar', value: data.total_fiado },
     { label: 'Anuladas', value: data.total_voided },
     { label: 'Uso Interno', value: data.total_internal_use },
   ] : [];

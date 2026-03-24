@@ -19,7 +19,7 @@ const PAYMENT_OPTIONS = [
   { value: 'efectivo', label: 'Efectivo' },
   { value: 'datafono', label: 'Datafono' },
   { value: 'transferencia', label: 'Transferencia' },
-  { value: 'fiado', label: 'Fiado' },
+  { value: 'fiado', label: 'Por cobrar' },
 ];
 
 const LIMIT = 20;
@@ -181,7 +181,7 @@ export default function SalesHistoryPage() {
         <SummaryCard icon={ShoppingCart} label="Total ventas" value={summary.total_count} />
         <SummaryCard icon={CheckCircle} label="Monto total" value={formatCOP(summary.total_amount)} />
         <SummaryCard icon={Ban} label="Anuladas" value={summary.voided_count} accent="red" />
-        <SummaryCard icon={Clock} label="Fiado pendiente" value={formatCOP(summary.fiado_pending)} accent="yellow" />
+        <SummaryCard icon={Clock} label="Por cobrar pendiente" value={formatCOP(summary.fiado_pending)} accent="yellow" />
       </div>
 
       {/* Table */}

@@ -170,7 +170,7 @@ function VentasTab() {
               ? Object.entries(kpis.by_payment_method).map(([m, v]) => `${m}: ${formatCOP(v)}`).join(', ')
               : '-'
           } />
-          <KpiCard icon={Clock} label="Fiado pendiente" value={formatCOP(kpis.fiado_pending ?? 0)} accent />
+          <KpiCard icon={Clock} label="Por cobrar pendiente" value={formatCOP(kpis.fiado_pending ?? 0)} accent />
           <KpiCard icon={PackageMinus} label="Uso interno" value={kpis.internal_use_count ?? 0} />
         </div>
       )}
@@ -222,10 +222,10 @@ function VentasTab() {
         </div>
       )}
 
-      {/* Fiado aging */}
+      {/* Por cobrar aging */}
       {fiadoBuckets.length > 0 && (
         <div>
-          <h3 className="font-semibold text-gray-900 mb-4">Envejecimiento de fiados</h3>
+          <h3 className="font-semibold text-gray-900 mb-4">Envejecimiento de cuentas por cobrar</h3>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {fiadoBuckets.map((b, i) => (
               <div

@@ -78,7 +78,7 @@ export default function OpenAccountsPage() {
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-2">
           <CreditCard className="w-6 h-6 text-premier-700" />
-          <h1 className="text-xl font-bold text-gray-900">Cuentas Abiertas (Fiado)</h1>
+          <h1 className="text-xl font-bold text-gray-900">Cuentas Abiertas (Por cobrar)</h1>
         </div>
       </div>
 
