@@ -245,7 +245,7 @@ export default function SalesHistoryPage() {
                         <td className="px-4 py-3"><StatusBadge status={sale.status} /></td>
                         <td className="px-4 py-3">
                           <div className="flex gap-2" onClick={e => e.stopPropagation()}>
-                            {sale.status === 'completed' && (
+                            {(sale.status === 'completed' || sale.status === 'pending') && (
                               <button
                                 onClick={() => { setVoidModal({ open: true, saleId: sale.id }); setVoidReason(''); }}
                                 className="text-red-600 hover:text-red-800 text-xs font-medium"
