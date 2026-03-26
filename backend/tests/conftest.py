@@ -49,7 +49,7 @@ def auth_headers(owner_token):
 @pytest.fixture(scope="session")
 def client(base_url):
     """HTTPX client pointing at the running API."""
-    with httpx.Client(base_url=base_url, timeout=30.0) as c:
+    with httpx.Client(base_url=base_url, timeout=30.0, follow_redirects=True) as c:
         yield c
 
 

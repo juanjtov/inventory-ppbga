@@ -14,6 +14,10 @@ class SaleCreate(BaseModel):
     notes: Optional[str] = None
 
 
+class AddItemsRequest(BaseModel):
+    items: List[SaleItemCreate]
+
+
 class VoidSale(BaseModel):
     reason: str
 

@@ -27,6 +27,9 @@ export default function POSPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [showCart, setShowCart] = useState(false);
+  const [todayAccounts, setTodayAccounts] = useState([]);
+  const [selectedAccountId, setSelectedAccountId] = useState(null);
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
 
   const debounceRef = useRef(null);
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -64,6 +67,21 @@ export default function POSPage() {
     })();
   }, []);
 
+  // Fetch today's open fiado accounts when payment method changes
+  useEffect(() => {
+    if (paymentMethod === 'fiado') {
+      setLoadingAccounts(true);
+      api.get('/sales/pending/today')
+        .then(res => setTodayAccounts(res.data))
+        .catch(() => setTodayAccounts([]))
+        .finally(() => setLoadingAccounts(false));
+    } else {
+      setTodayAccounts([]);
+      setSelectedAccountId(null);
+      setClientName('');
+    }
+  }, [paymentMethod]);
+
   // Realtime stock updates
   const handleRealtimeUpdate = useCallback((updated) => {
     setProducts(prev => prev.map(p => (p.id === updated.id ? { ...p, ...updated } : p)));
@@ -86,34 +104,48 @@ export default function POSPage() {
     }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [itemCount, submitting, paymentMethod, clientName, items, total]);
+  }, [itemCount, submitting, paymentMethod, clientName, selectedAccountId, items, total]);
 
   async function handleConfirmSale() {
     if (itemCount === 0) return;
-    if (paymentMethod === 'fiado' && !clientName.trim()) {
+    if (paymentMethod === 'fiado' && !selectedAccountId && !clientName.trim()) {
       addToast('Ingresa el nombre del cliente para venta por cobrar', 'error');
       return;
     }
 
     setSubmitting(true);
     try {
-      await api.post('/sales', {
-        items: items.map((i) => ({
-          product_id: i.product_id,
-          quantity: i.quantity,
-          unit_price: i.unit_price,
-        })),
-        payment_method: paymentMethod,
-        client_name: paymentMethod === 'fiado' ? clientName.trim() : null,
-        total,
-      });
-      addToast('Venta registrada correctamente', 'success');
+      if (paymentMethod === 'fiado' && selectedAccountId) {
+        // Add items to existing account
+        await api.post(`/sales/${selectedAccountId}/add-items`, {
+          items: items.map((i) => ({
+            product_id: i.product_id,
+            quantity: i.quantity,
+          })),
+        });
+        addToast('Items agregados a cuenta existente', 'success');
+      } else {
+        // Create new sale
+        await api.post('/sales', {
+          items: items.map((i) => ({
+            product_id: i.product_id,
+            quantity: i.quantity,
+            unit_price: i.unit_price,
+          })),
+          payment_method: paymentMethod,
+          client_name: paymentMethod === 'fiado' ? clientName.trim() : null,
+          total,
+        });
+        addToast('Venta registrada correctamente', 'success');
+      }
       clearCart();
       setPaymentMethod('efectivo');
       setClientName('');
+      setSelectedAccountId(null);
+      setTodayAccounts([]);
       setShowCart(false);
     } catch (err) {
-      addToast(err.response?.data?.error || 'Error al registrar venta', 'error');
+      addToast(err.response?.data?.detail || 'Error al registrar venta', 'error');
     } finally {
       setSubmitting(false);
     }
@@ -200,13 +232,47 @@ export default function POSPage() {
         </div>
 
         {paymentMethod === 'fiado' && (
-          <input
-            type="text"
-            placeholder="Nombre del cliente"
-            value={clientName}
-            onChange={(e) => setClientName(e.target.value)}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-premier-700 focus:border-transparent"
-          />
+          <div className="space-y-2">
+            {loadingAccounts ? (
+              <div className="flex justify-center py-2"><Spinner size="h-5 w-5" /></div>
+            ) : todayAccounts.length > 0 ? (
+              <>
+                <select
+                  value={selectedAccountId || ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setSelectedAccountId(val || null);
+                    if (val) setClientName('');
+                  }}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-premier-700 focus:border-transparent bg-white"
+                >
+                  <option value="">-- Nueva cuenta --</option>
+                  {todayAccounts.map((acc) => (
+                    <option key={acc.id} value={acc.id}>
+                      {acc.client_name} — {formatCOP(acc.total)}
+                    </option>
+                  ))}
+                </select>
+                {!selectedAccountId && (
+                  <input
+                    type="text"
+                    placeholder="Nombre del cliente"
+                    value={clientName}
+                    onChange={(e) => setClientName(e.target.value)}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-premier-700 focus:border-transparent"
+                  />
+                )}
+              </>
+            ) : (
+              <input
+                type="text"
+                placeholder="Nombre del cliente"
+                value={clientName}
+                onChange={(e) => setClientName(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-premier-700 focus:border-transparent"
+              />
+            )}
+          </div>
         )}
 
         <button

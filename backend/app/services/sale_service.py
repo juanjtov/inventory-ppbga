@@ -1,6 +1,7 @@
 from fastapi import HTTPException
 from app.database import supabase
-from app.models.sale import SaleCreate
+from app.models.sale import SaleCreate, AddItemsRequest
+from app.timezone import col_now, date_range_col
 
 
 def create_sale(data: SaleCreate, user: dict) -> dict:
@@ -99,6 +100,135 @@ def create_sale(data: SaleCreate, user: dict) -> dict:
     return get_sale_detail(sale["id"])
 
 
+def get_today_pending_fiado() -> list:
+    """Get today's pending fiado sales for the POS dropdown."""
+    today_str = col_now().strftime("%Y-%m-%d")
+    date_start, date_end = date_range_col(today_str)
+
+    result = (
+        supabase.table("sales")
+        .select("id, client_name, total")
+        .eq("status", "pending")
+        .eq("payment_method", "fiado")
+        .gte("created_at", date_start)
+        .lte("created_at", date_end)
+        .order("client_name", desc=False)
+        .execute()
+    )
+    return result.data
+
+
+def add_items_to_sale(sale_id: str, data: AddItemsRequest, user: dict) -> dict:
+    """Add items to an existing pending fiado sale."""
+    # Fetch and validate the sale
+    try:
+        sale = (
+            supabase.table("sales")
+            .select("*")
+            .eq("id", sale_id)
+            .single()
+            .execute()
+        )
+    except Exception:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+
+    if not sale.data:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+
+    if sale.data["status"] != "pending":
+        raise HTTPException(
+            status_code=400,
+            detail="Solo se pueden agregar items a ventas pendientes",
+        )
+
+    if sale.data["payment_method"] != "fiado":
+        raise HTTPException(
+            status_code=400,
+            detail="Solo se pueden agregar items a ventas fiado",
+        )
+
+    # Validate items and compute totals (same pattern as create_sale)
+    items_data = []
+    added_total = 0
+
+    for item in data.items:
+        product = (
+            supabase.table("products")
+            .select("*")
+            .eq("id", item.product_id)
+            .single()
+            .execute()
+        )
+        if not product.data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Producto no encontrado: {item.product_id}",
+            )
+        p = product.data
+
+        if p["type"] == "product":
+            if p["stock"] is None or p["stock"] < item.quantity:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Stock insuficiente para '{p['name']}'. Disponible: {p.get('stock', 0)}, solicitado: {item.quantity}",
+                )
+
+        subtotal = p["sale_price"] * item.quantity
+        items_data.append({
+            "product_id": item.product_id,
+            "quantity": item.quantity,
+            "unit_price": p["sale_price"],
+            "subtotal": subtotal,
+            "product_type": p["type"],
+        })
+        added_total += subtotal
+
+    # Insert new sale items and decrement stock
+    for item_data in items_data:
+        sale_item = {
+            "sale_id": sale_id,
+            "product_id": item_data["product_id"],
+            "quantity": item_data["quantity"],
+            "unit_price": item_data["unit_price"],
+            "subtotal": item_data["subtotal"],
+        }
+        supabase.table("sale_items").insert(sale_item).execute()
+
+        if item_data["product_type"] == "product":
+            product = (
+                supabase.table("products")
+                .select("stock")
+                .eq("id", item_data["product_id"])
+                .single()
+                .execute()
+            )
+            new_stock = product.data["stock"] - item_data["quantity"]
+            if new_stock < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Stock insuficiente (condición de carrera detectada)",
+                )
+            supabase.table("products").update({"stock": new_stock}).eq(
+                "id", item_data["product_id"]
+            ).execute()
+
+    # Update sale total
+    new_total = sale.data["total"] + added_total
+    supabase.table("sales").update({"total": new_total}).eq("id", sale_id).execute()
+
+    # Audit log
+    supabase.table("audit_log").insert({
+        "user_id": user["id"],
+        "action": "fiado_add_items",
+        "entity_type": "sale",
+        "entity_id": sale_id,
+        "old_values": {"total": sale.data["total"]},
+        "new_values": {"total": new_total, "items_added": len(items_data)},
+    }).execute()
+
+    return get_sale_detail(sale_id)
+
+
 def void_sale(sale_id: str, reason: str, user: dict) -> dict:
     """Void a sale and restore stock."""
     sale = (
@@ -122,19 +252,30 @@ def void_sale(sale_id: str, reason: str, user: dict) -> dict:
         .execute()
     )
 
-    # Restore stock for each product-type item
+    # Aggregate quantities per product (handles consolidated sales with
+    # multiple sale_items rows for the same product)
+    restore_map = {}
     for item in items.data:
         product_info = item.get("products")
         if product_info and product_info["type"] == "product":
-            current_stock = product_info["stock"] or 0
-            new_stock = current_stock + item["quantity"]
-            supabase.table("products").update({"stock": new_stock}).eq(
-                "id", item["product_id"]
-            ).execute()
+            pid = item["product_id"]
+            restore_map[pid] = restore_map.get(pid, 0) + item["quantity"]
+
+    # Restore stock per product (read fresh stock to avoid stale join data)
+    for pid, qty in restore_map.items():
+        product = (
+            supabase.table("products")
+            .select("stock")
+            .eq("id", pid)
+            .single()
+            .execute()
+        )
+        current_stock = product.data["stock"] or 0
+        supabase.table("products").update({"stock": current_stock + qty}).eq(
+            "id", pid
+        ).execute()
 
     # Update sale status
-    from app.timezone import col_now
-
     supabase.table("sales").update({
         "status": "voided",
         "voided_by": user["id"],

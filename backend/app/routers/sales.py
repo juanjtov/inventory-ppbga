@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.database import supabase
 from app.auth import get_current_user, require_role
-from app.models.sale import SaleCreate, VoidSale
-from app.services.sale_service import create_sale, void_sale, pay_sale
+from app.models.sale import SaleCreate, VoidSale, AddItemsRequest
+from app.services.sale_service import (
+    create_sale, void_sale, pay_sale, get_today_pending_fiado, add_items_to_sale,
+)
 from typing import Optional
 
 router = APIRouter()
@@ -75,6 +77,13 @@ async def pending_sales(
     return sales
 
 
+@router.get("/pending/today")
+async def pending_fiado_today(
+    user=Depends(get_current_user),
+):
+    return get_today_pending_fiado()
+
+
 @router.get("/{id}")
 async def get_sale(
     id: str,
@@ -130,4 +139,14 @@ async def pay_sale_endpoint(
     user=Depends(require_role("owner", "admin")),
 ):
     result = pay_sale(id, user)
+    return result
+
+
+@router.post("/{id}/add-items")
+async def add_items_endpoint(
+    id: str,
+    body: AddItemsRequest,
+    user=Depends(get_current_user),
+):
+    result = add_items_to_sale(id, body, user)
     return result
