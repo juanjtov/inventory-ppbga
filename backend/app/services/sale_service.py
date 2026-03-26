@@ -145,7 +145,7 @@ def void_sale(sale_id: str, reason: str, user: dict) -> dict:
     return get_sale_detail(sale_id)
 
 
-def pay_sale(sale_id: str) -> dict:
+def pay_sale(sale_id: str, user: dict) -> dict:
     """Mark a pending fiado sale as completed."""
     sale = (
         supabase.table("sales")
@@ -166,6 +166,16 @@ def pay_sale(sale_id: str) -> dict:
     supabase.table("sales").update({"status": "completed"}).eq(
         "id", sale_id
     ).execute()
+
+    # Audit log
+    supabase.table("audit_log").insert({
+        "user_id": user["id"],
+        "action": "fiado_paid",
+        "entity_type": "sale",
+        "entity_id": sale_id,
+        "old_values": {"status": "pending"},
+        "new_values": {"status": "completed"},
+    }).execute()
 
     return get_sale_detail(sale_id)
 

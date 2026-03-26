@@ -58,7 +58,8 @@ async def pending_sales(
     result = (
         supabase.table("sales")
         .select("*, users!sales_user_id_fkey(full_name)")
-        .eq("status", "pending")
+        .eq("payment_method", "fiado")
+        .in_("status", ["pending", "completed"])
         .order("created_at", desc=False)
         .execute()
     )
@@ -67,6 +68,9 @@ async def pending_sales(
     for s in result.data:
         s["user_name"] = (s.pop("users", {}) or {}).get("full_name")
         sales.append(s)
+
+    # Pending first, then completed (paid) at the bottom
+    sales.sort(key=lambda s: (0 if s["status"] == "pending" else 1, s["created_at"]))
 
     return sales
 
@@ -125,5 +129,5 @@ async def pay_sale_endpoint(
     id: str,
     user=Depends(require_role("owner", "admin")),
 ):
-    result = pay_sale(id)
+    result = pay_sale(id, user)
     return result
