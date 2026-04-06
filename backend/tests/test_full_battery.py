@@ -382,7 +382,11 @@ class TestSales:
             "payment_method": "fiado",
             "client_name": "Pay Test",
         }, headers=headers).json()
-        res = client.post(f"/api/v1/sales/{sale['id']}/pay", headers=headers)
+        res = client.post(
+            f"/api/v1/sales/{sale['id']}/pay",
+            json={"payment_method": "efectivo"},
+            headers=headers,
+        )
         assert res.status_code == 200
         assert res.json()["status"] == "completed"
 
@@ -391,7 +395,11 @@ class TestSales:
             "items": [{"product_id": product_with_stock["id"], "quantity": 1}],
             "payment_method": "efectivo",
         }, headers=headers).json()
-        res = client.post(f"/api/v1/sales/{sale['id']}/pay", headers=headers)
+        res = client.post(
+            f"/api/v1/sales/{sale['id']}/pay",
+            json={"payment_method": "efectivo"},
+            headers=headers,
+        )
         assert res.status_code == 400
 
 

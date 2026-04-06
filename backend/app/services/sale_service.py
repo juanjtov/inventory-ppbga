@@ -1,7 +1,10 @@
 from fastapi import HTTPException
 from app.database import supabase
-from app.models.sale import SaleCreate, AddItemsRequest
+from app.models.sale import SaleCreate, AddItemsRequest, PaySale
 from app.timezone import col_now, date_range_col
+
+
+VALID_PAY_METHODS = {"efectivo", "datafono", "transferencia"}
 
 
 def create_sale(data: SaleCreate, user: dict) -> dict:
@@ -275,19 +278,28 @@ def void_sale(sale_id: str, reason: str, user: dict) -> dict:
             "id", pid
         ).execute()
 
-    # Update sale status
+    # Update sale status. Clear paid_payment_method and paid_at so a voided
+    # sale never contributes to any cash closing aggregation.
     supabase.table("sales").update({
         "status": "voided",
         "voided_by": user["id"],
         "void_reason": reason,
         "voided_at": col_now().isoformat(),
+        "paid_payment_method": None,
+        "paid_at": None,
     }).eq("id", sale_id).execute()
 
     return get_sale_detail(sale_id)
 
 
-def pay_sale(sale_id: str, user: dict) -> dict:
-    """Mark a pending fiado sale as completed."""
+def pay_sale(sale_id: str, data: PaySale, user: dict) -> dict:
+    """Mark a pending fiado sale as completed and record how it was settled."""
+    if data.payment_method not in VALID_PAY_METHODS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Método de pago inválido. Debe ser uno de: {', '.join(sorted(VALID_PAY_METHODS))}",
+        )
+
     sale = (
         supabase.table("sales")
         .select("*")
@@ -304,18 +316,25 @@ def pay_sale(sale_id: str, user: dict) -> dict:
             detail="Solo se pueden cobrar ventas pendientes (fiado)",
         )
 
-    supabase.table("sales").update({"status": "completed"}).eq(
-        "id", sale_id
-    ).execute()
+    paid_at = col_now().isoformat()
+    supabase.table("sales").update({
+        "status": "completed",
+        "paid_payment_method": data.payment_method,
+        "paid_at": paid_at,
+    }).eq("id", sale_id).execute()
 
-    # Audit log
+    # Audit log — record both the status flip and the settlement method
     supabase.table("audit_log").insert({
         "user_id": user["id"],
         "action": "fiado_paid",
         "entity_type": "sale",
         "entity_id": sale_id,
         "old_values": {"status": "pending"},
-        "new_values": {"status": "completed"},
+        "new_values": {
+            "status": "completed",
+            "paid_payment_method": data.payment_method,
+            "paid_at": paid_at,
+        },
     }).execute()
 
     return get_sale_detail(sale_id)

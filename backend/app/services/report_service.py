@@ -7,7 +7,13 @@ import io
 
 
 def get_daily_summary(date: str, date_from: str = None, date_to: str = None) -> dict:
-    """Get summary for a date or date range."""
+    """Get summary for a date or date range.
+
+    Note: this is the *sales analytics* view ("what was sold today, by the
+    payment method the customer originally chose"). For the *cash flow* view
+    ("what money came in today, by channel — including fiado collections"),
+    see ``get_cash_closing_data``.
+    """
     if date_from and date_to:
         date_start = f"{date_from}T00:00:00-05:00"
         date_end = f"{date_to}T23:59:59-05:00"
@@ -98,7 +104,19 @@ def get_daily_summary(date: str, date_from: str = None, date_to: str = None) -> 
 
 
 def get_cash_closing_data(date: str) -> dict:
-    """Get calculated data for cash closing form."""
+    """Get calculated data for cash closing form.
+
+    Money-flow semantics:
+      - ``total_cash`` / ``total_transfer`` / ``total_datafono`` represent the
+        money that actually came in via that channel today, including cash
+        collected today from fiados originally created on a previous day.
+      - ``total_credit_issued`` is fiado created today (non-voided) — informational.
+      - ``total_credit_collected`` is fiado paid today (regardless of when created).
+      - ``total_credit_outstanding`` is the snapshot of all currently-pending fiado.
+      - ``total_fiado`` is preserved as an alias for ``total_credit_issued`` so
+        legacy frontends still see a value, but new UI should use the explicit
+        credit_* fields.
+    """
     # Check if closing already exists
     existing = (
         supabase.table("cash_closings")
@@ -111,36 +129,77 @@ def get_cash_closing_data(date: str) -> dict:
 
     date_start, date_end = date_range_col(date)
 
-    sales = (
+    # Bucket A: non-fiado sales created today (settled instantly)
+    instant = (
         supabase.table("sales")
-        .select("*")
+        .select("payment_method, total, status")
+        .gte("created_at", date_start)
+        .lte("created_at", date_end)
+        .neq("payment_method", "fiado")
+        .execute()
+    )
+
+    # Bucket B: fiado sales paid today (regardless of when originally created)
+    collected = (
+        supabase.table("sales")
+        .select("paid_payment_method, total")
+        .eq("payment_method", "fiado")
+        .eq("status", "completed")
+        .gte("paid_at", date_start)
+        .lte("paid_at", date_end)
+        .execute()
+    )
+
+    # Bucket C: fiado sales CREATED today (informational — credit issued today)
+    issued = (
+        supabase.table("sales")
+        .select("total, status")
+        .eq("payment_method", "fiado")
         .gte("created_at", date_start)
         .lte("created_at", date_end)
         .execute()
     )
 
-    total_sales = 0
-    total_cash = 0
-    total_transfer = 0
-    total_datafono = 0
-    total_fiado = 0
-    total_voided = 0
+    # Bucket D: voided sales created today
+    voided = (
+        supabase.table("sales")
+        .select("total")
+        .gte("created_at", date_start)
+        .lte("created_at", date_end)
+        .eq("status", "voided")
+        .execute()
+    )
 
-    for s in sales.data:
+    # Bucket E: snapshot of all currently-pending fiado
+    outstanding = (
+        supabase.table("sales")
+        .select("total")
+        .eq("payment_method", "fiado")
+        .eq("status", "pending")
+        .execute()
+    )
+
+    totals = {"efectivo": 0, "transferencia": 0, "datafono": 0}
+    for s in instant.data:
         if s["status"] == "voided":
-            total_voided += s["total"]
             continue
-        total_sales += s["total"]
-        if s["payment_method"] == "efectivo":
-            total_cash += s["total"]
-        elif s["payment_method"] == "transferencia":
-            total_transfer += s["total"]
-        elif s["payment_method"] == "datafono":
-            total_datafono += s["total"]
-        elif s["payment_method"] == "fiado":
-            total_fiado += s["total"]
+        if s["payment_method"] in totals:
+            totals[s["payment_method"]] += s["total"]
+    for s in collected.data:
+        # Legacy paid fiado (pre-migration) has NULL paid_payment_method.
+        # We can't attribute it to a channel, so it stays out of the per-method
+        # totals — surfaced separately via total_credit_collected.
+        method = s.get("paid_payment_method")
+        if method in totals:
+            totals[method] += s["total"]
 
-    # Internal use value
+    total_credit_issued = sum(s["total"] for s in issued.data if s["status"] != "voided")
+    total_credit_collected = sum(s["total"] for s in collected.data)
+    total_credit_outstanding = sum(s["total"] for s in outstanding.data)
+    total_voided = sum(s["total"] for s in voided.data)
+    total_money_in = totals["efectivo"] + totals["transferencia"] + totals["datafono"]
+
+    # Internal use value (unchanged)
     internal = (
         supabase.table("internal_use")
         .select("quantity, products(sale_price)")
@@ -155,11 +214,14 @@ def get_cash_closing_data(date: str) -> dict:
 
     return {
         "existing": False,
-        "total_sales": total_sales,
-        "total_cash": total_cash,
-        "total_transfer": total_transfer,
-        "total_datafono": total_datafono,
-        "total_fiado": total_fiado,
+        "total_sales": total_money_in,
+        "total_cash": totals["efectivo"],
+        "total_transfer": totals["transferencia"],
+        "total_datafono": totals["datafono"],
+        "total_fiado": total_credit_issued,  # legacy alias for credit_issued
+        "total_credit_issued": total_credit_issued,
+        "total_credit_collected": total_credit_collected,
+        "total_credit_outstanding": total_credit_outstanding,
         "total_voided": total_voided,
         "total_internal_use": total_internal,
     }
@@ -198,6 +260,9 @@ def create_cash_closing(data, user: dict) -> dict:
         "total_transfer": calc["total_transfer"],
         "total_datafono": calc["total_datafono"],
         "total_fiado": calc["total_fiado"],
+        "total_credit_issued": calc["total_credit_issued"],
+        "total_credit_collected": calc["total_credit_collected"],
+        "total_credit_outstanding": calc["total_credit_outstanding"],
         "total_voided": calc["total_voided"],
         "total_internal_use": calc["total_internal_use"],
         "physical_cash": data.physical_cash,

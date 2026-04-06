@@ -95,7 +95,11 @@ def test_pay_pending_sale(client, auth_headers, test_product_id):
     sale_id = create_res.json()["id"]
 
     # Pay it
-    pay_res = client.post(f"/api/v1/sales/{sale_id}/pay", headers=auth_headers)
+    pay_res = client.post(
+        f"/api/v1/sales/{sale_id}/pay",
+        json={"payment_method": "efectivo"},
+        headers=auth_headers,
+    )
     assert pay_res.status_code == 200
     assert pay_res.json()["status"] == "completed"
 

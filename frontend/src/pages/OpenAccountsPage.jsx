@@ -1,11 +1,23 @@
 import { useState, useEffect } from 'react';
-import { CreditCard, ChevronDown, ChevronUp, CheckCircle, AlertTriangle, BadgeCheck } from 'lucide-react';
+import { CreditCard, ChevronDown, ChevronUp, CheckCircle, AlertTriangle, BadgeCheck, Banknote, ArrowRightLeft } from 'lucide-react';
 import api from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { formatCOP } from '../lib/formatCurrency';
 import Spinner from '../components/ui/Spinner';
 import Modal from '../components/ui/Modal';
+
+const PAY_METHODS = [
+  { value: 'efectivo', label: 'Efectivo', icon: Banknote },
+  { value: 'datafono', label: 'Datáfono', icon: CreditCard },
+  { value: 'transferencia', label: 'Transferencia', icon: ArrowRightLeft },
+];
+
+const METHOD_LABELS = {
+  efectivo: 'Efectivo',
+  datafono: 'Datáfono',
+  transferencia: 'Transferencia',
+};
 
 export default function OpenAccountsPage() {
   const { user } = useAuth();
@@ -35,12 +47,17 @@ export default function OpenAccountsPage() {
     }
   }
 
-  async function handleMarkPaid(saleId) {
+  async function handleMarkPaid(saleId, paymentMethod) {
     setPaying(true);
     try {
-      await api.post(`/sales/${saleId}/pay`);
+      const res = await api.post(`/sales/${saleId}/pay`, { payment_method: paymentMethod });
       addToast('Cuenta marcada como pagada', 'success');
-      setSales(prev => prev.map(s => s.id === saleId ? { ...s, status: 'completed' } : s));
+      setSales(prev => prev.map(s => s.id === saleId ? {
+        ...s,
+        status: 'completed',
+        paid_payment_method: res.data?.paid_payment_method ?? paymentMethod,
+        paid_at: res.data?.paid_at ?? new Date().toISOString(),
+      } : s));
       setConfirmSale(null);
     } catch (err) {
       addToast(err.response?.data?.detail || 'Error al marcar como pagado', 'error');
@@ -151,30 +168,40 @@ export default function OpenAccountsPage() {
         </div>
       )}
 
-      {/* Confirm Dialog */}
+      {/* Pay Dialog: choose payment method */}
       <Modal
         isOpen={!!confirmSale}
         onClose={() => !paying && setConfirmSale(null)}
         title="Confirmar Pago"
       >
-        <p className="text-sm text-gray-600 mb-4">
-          Confirmar que <strong>{confirmSale?.client_name || 'el cliente'}</strong> ha pagado{' '}
-          <strong>{confirmSale ? formatCOP(confirmSale.total) : ''}</strong>?
+        <p className="text-sm text-gray-600 mb-1">
+          <strong>{confirmSale?.client_name || 'Cliente'}</strong>
         </p>
-        <div className="flex justify-end gap-3">
+        <p className="text-sm text-gray-600 mb-4">
+          Total: <strong>{confirmSale ? formatCOP(confirmSale.total) : ''}</strong>
+        </p>
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">¿Cómo pagó?</p>
+        <div className="space-y-2">
+          {PAY_METHODS.map(({ value, label, icon: Icon }) => (
+            <button
+              key={value}
+              onClick={() => handleMarkPaid(confirmSale.id, value)}
+              disabled={paying}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg border-2 border-gray-200 hover:border-premier-700 hover:bg-premier-50 text-left text-gray-800 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Icon className="w-5 h-5 text-premier-700 flex-shrink-0" />
+              <span className="flex-1">{label}</span>
+              {paying && <Spinner size="h-4 w-4" />}
+            </button>
+          ))}
+        </div>
+        <div className="flex justify-end mt-4">
           <button
             onClick={() => setConfirmSale(null)}
             disabled={paying}
             className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
           >
             Cancelar
-          </button>
-          <button
-            onClick={() => handleMarkPaid(confirmSale.id)}
-            disabled={paying}
-            className="px-4 py-2 text-sm rounded-lg bg-premier-700 text-white font-medium hover:bg-premier-800 disabled:opacity-50 flex items-center gap-2"
-          >
-            {paying ? <Spinner size="h-4 w-4" /> : 'Confirmar'}
           </button>
         </div>
       </Modal>
@@ -204,6 +231,9 @@ function SaleCard({ sale, expandedId, setExpandedId, expandedData, setExpandedDa
             {isPaid && (
               <span className="inline-flex items-center gap-1 bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-xs font-medium">
                 <BadgeCheck className="w-3 h-3" /> Pagado
+                {sale.paid_payment_method && (
+                  <span className="ml-1">· {METHOD_LABELS[sale.paid_payment_method] || sale.paid_payment_method}</span>
+                )}
               </span>
             )}
             {!isPaid && days > 7 && (

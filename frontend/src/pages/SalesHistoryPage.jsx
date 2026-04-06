@@ -1,11 +1,23 @@
 import { useState, useEffect, useCallback, Fragment } from 'react';
-import { Download, ChevronDown, ChevronUp, XCircle, CheckCircle, ShoppingCart, Ban, Clock } from 'lucide-react';
+import { Download, ChevronDown, ChevronUp, XCircle, CheckCircle, ShoppingCart, Ban, Clock, Banknote, CreditCard, ArrowRightLeft } from 'lucide-react';
 import api from '../api/client';
 import { useToast } from '../contexts/ToastContext';
 import { formatCOP } from '../lib/formatCurrency';
 import { todayStr } from '../lib/dateUtils';
 import Modal from '../components/ui/Modal';
 import Spinner from '../components/ui/Spinner';
+
+const PAY_METHODS = [
+  { value: 'efectivo', label: 'Efectivo', icon: Banknote },
+  { value: 'datafono', label: 'Datáfono', icon: CreditCard },
+  { value: 'transferencia', label: 'Transferencia', icon: ArrowRightLeft },
+];
+
+const METHOD_LABELS = {
+  efectivo: 'Efectivo',
+  datafono: 'Datáfono',
+  transferencia: 'Transferencia',
+};
 
 const STATUS_OPTIONS = [
   { value: '', label: 'Todas' },
@@ -49,6 +61,8 @@ export default function SalesHistoryPage() {
   const [expandedSaleData, setExpandedSaleData] = useState({});
   const [voidModal, setVoidModal] = useState({ open: false, saleId: null });
   const [voidReason, setVoidReason] = useState('');
+  const [payModal, setPayModal] = useState({ open: false, sale: null });
+  const [paying, setPaying] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -103,13 +117,17 @@ export default function SalesHistoryPage() {
     }
   };
 
-  const handleMarkPaid = async (saleId) => {
+  const handleMarkPaid = async (saleId, paymentMethod) => {
+    setPaying(true);
     try {
-      await api.post(`/sales/${saleId}/pay`);
+      await api.post(`/sales/${saleId}/pay`, { payment_method: paymentMethod });
       addToast('Marcada como pagada', 'success');
+      setPayModal({ open: false, sale: null });
       fetchSales(offset);
-    } catch {
-      addToast('Error al marcar como pagada', 'error');
+    } catch (err) {
+      addToast(err.response?.data?.detail || 'Error al marcar como pagada', 'error');
+    } finally {
+      setPaying(false);
     }
   };
 
@@ -241,7 +259,14 @@ export default function SalesHistoryPage() {
                         <td className="px-4 py-3 hidden lg:table-cell">{sale.user_name ?? '-'}</td>
                         <td className="px-4 py-3 max-w-[200px] truncate hidden md:table-cell">{productsSummary}</td>
                         <td className="px-4 py-3 text-right font-medium">{formatCOP(sale.total)}</td>
-                        <td className="px-4 py-3 capitalize hidden md:table-cell">{sale.payment_method}</td>
+                        <td className="px-4 py-3 capitalize hidden md:table-cell">
+                          {sale.payment_method}
+                          {sale.payment_method === 'fiado' && sale.paid_payment_method && (
+                            <span className="block text-xs text-gray-400">
+                              Cobrado: {METHOD_LABELS[sale.paid_payment_method] || sale.paid_payment_method}
+                            </span>
+                          )}
+                        </td>
                         <td className="px-4 py-3"><StatusBadge status={sale.status} /></td>
                         <td className="px-4 py-3">
                           <div className="flex gap-2" onClick={e => e.stopPropagation()}>
@@ -255,7 +280,7 @@ export default function SalesHistoryPage() {
                             )}
                             {sale.status === 'pending' && (
                               <button
-                                onClick={() => handleMarkPaid(sale.id)}
+                                onClick={() => setPayModal({ open: true, sale })}
                                 className="text-premier-700 hover:text-premier-700/80 text-xs font-medium"
                               >
                                 Marcar pagado
@@ -346,6 +371,44 @@ export default function SalesHistoryPage() {
               {submitting ? 'Anulando...' : 'Confirmar anulacion'}
             </button>
           </div>
+        </div>
+      </Modal>
+
+      {/* Pay modal: choose payment method */}
+      <Modal
+        isOpen={payModal.open}
+        onClose={() => !paying && setPayModal({ open: false, sale: null })}
+        title="Confirmar Pago"
+      >
+        <p className="text-sm text-gray-600 mb-1">
+          <strong>{payModal.sale?.client_name || 'Cliente'}</strong>
+        </p>
+        <p className="text-sm text-gray-600 mb-4">
+          Total: <strong>{payModal.sale ? formatCOP(payModal.sale.total) : ''}</strong>
+        </p>
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">¿Cómo pagó?</p>
+        <div className="space-y-2">
+          {PAY_METHODS.map(({ value, label, icon: Icon }) => (
+            <button
+              key={value}
+              onClick={() => handleMarkPaid(payModal.sale.id, value)}
+              disabled={paying}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg border-2 border-gray-200 hover:border-premier-700 hover:bg-premier-50 text-left text-gray-800 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Icon className="w-5 h-5 text-premier-700 flex-shrink-0" />
+              <span className="flex-1">{label}</span>
+              {paying && <Spinner size="h-4 w-4" />}
+            </button>
+          ))}
+        </div>
+        <div className="flex justify-end mt-4">
+          <button
+            onClick={() => setPayModal({ open: false, sale: null })}
+            disabled={paying}
+            className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancelar
+          </button>
         </div>
       </Modal>
     </div>

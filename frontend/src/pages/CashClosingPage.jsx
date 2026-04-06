@@ -87,12 +87,30 @@ export default function CashClosingPage() {
     return 'bg-yellow-50 border-yellow-200';
   }
 
-  const summaryRows = data ? [
-    { label: 'Total Ventas', value: data.total_sales },
+  // Closings created before migration 002 won't have the credit_* fields.
+  const hasCreditBreakdown = data && (
+    data.total_credit_issued !== undefined ||
+    data.total_credit_collected !== undefined ||
+    data.total_credit_outstanding !== undefined
+  );
+
+  const moneyInRows = data ? [
     { label: 'Efectivo', value: data.total_cash },
-    { label: 'Datafono', value: data.total_datafono },
+    { label: 'Datáfono', value: data.total_datafono },
     { label: 'Transferencia', value: data.total_transfer },
-    { label: 'Por cobrar', value: data.total_fiado },
+    { label: 'Total recibido hoy', value: data.total_sales, bold: true },
+  ] : [];
+
+  const creditRows = hasCreditBreakdown ? [
+    { label: 'Crédito otorgado hoy', value: data.total_credit_issued ?? 0, muted: true },
+    { label: 'Crédito cobrado hoy', value: data.total_credit_collected ?? 0, muted: true },
+    { label: 'Total por cobrar pendiente', value: data.total_credit_outstanding ?? 0, muted: true, accent: 'yellow' },
+  ] : [
+    // Legacy closings: only the original "Por cobrar" total is available.
+    { label: 'Por cobrar (creado hoy)', value: data?.total_fiado ?? 0, muted: true },
+  ];
+
+  const otherRows = data ? [
     { label: 'Anuladas', value: data.total_voided },
     { label: 'Uso Interno', value: data.total_internal_use },
   ] : [];
@@ -137,15 +155,52 @@ export default function CashClosingPage() {
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* Summary */}
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
-            <h2 className="text-sm font-semibold text-gray-700 mb-3">Resumen del Dia</h2>
+            <h2 className="text-sm font-semibold text-gray-700 mb-1">Resumen del Día</h2>
+            <p className="text-xs text-gray-400 mb-3">
+              Dinero recibido hoy por método (incluye fiados cobrados hoy)
+            </p>
             <div className="space-y-2">
-              {summaryRows.map(row => (
+              {moneyInRows.map(row => (
+                <div key={row.label} className={`flex justify-between text-sm ${row.bold ? 'pt-2 border-t border-gray-200 font-semibold' : ''}`}>
+                  <span className={row.bold ? 'text-gray-900' : 'text-gray-600'}>{row.label}</span>
+                  <span className={`${row.bold ? 'font-bold' : 'font-medium'} text-gray-900`}>
+                    {formatCOP(row.value ?? 0)}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mt-5 mb-2">
+              Crédito (Por cobrar)
+            </h3>
+            <div className="space-y-2">
+              {creditRows.map(row => (
+                <div key={row.label} className="flex justify-between text-sm">
+                  <span className="text-gray-500">{row.label}</span>
+                  <span className={`font-medium ${row.accent === 'yellow' ? 'text-yellow-700' : 'text-gray-700'}`}>
+                    {formatCOP(row.value ?? 0)}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mt-5 mb-2">
+              Otros
+            </h3>
+            <div className="space-y-2">
+              {otherRows.map(row => (
                 <div key={row.label} className="flex justify-between text-sm">
                   <span className="text-gray-600">{row.label}</span>
                   <span className="font-medium text-gray-900">{formatCOP(row.value ?? 0)}</span>
                 </div>
               ))}
             </div>
+
+            {readOnly && !hasCreditBreakdown && (
+              <p className="mt-4 text-xs text-gray-400 italic">
+                Este corte usa el formato anterior — los créditos cobrados no están desglosados por método.
+              </p>
+            )}
           </div>
 
           {/* Physical cash input */}

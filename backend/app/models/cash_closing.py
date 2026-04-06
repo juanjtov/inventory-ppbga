@@ -17,6 +17,9 @@ class CashClosingResponse(BaseModel):
     total_transfer: int
     total_datafono: int
     total_fiado: int
+    total_credit_issued: int = 0
+    total_credit_collected: int = 0
+    total_credit_outstanding: int = 0
     total_voided: int
     total_internal_use: int
     physical_cash: int

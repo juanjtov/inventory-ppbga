@@ -54,7 +54,11 @@ def test_get_pending_today_excludes_paid(client, auth_headers, test_product_id):
     assert create_res.status_code == 200
     sale_id = create_res.json()["id"]
 
-    pay_res = client.post(f"/api/v1/sales/{sale_id}/pay", headers=auth_headers)
+    pay_res = client.post(
+        f"/api/v1/sales/{sale_id}/pay",
+        json={"payment_method": "efectivo"},
+        headers=auth_headers,
+    )
     assert pay_res.status_code == 200
 
     # Should NOT appear
@@ -149,7 +153,11 @@ def test_add_items_to_paid_sale_fails(client, auth_headers, test_product_id):
         headers=auth_headers,
     )
     sale_id = create_res.json()["id"]
-    client.post(f"/api/v1/sales/{sale_id}/pay", headers=auth_headers)
+    client.post(
+        f"/api/v1/sales/{sale_id}/pay",
+        json={"payment_method": "efectivo"},
+        headers=auth_headers,
+    )
 
     # Try to add items
     res = client.post(

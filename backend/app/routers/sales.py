@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.database import supabase
 from app.auth import get_current_user, require_role
-from app.models.sale import SaleCreate, VoidSale, AddItemsRequest
+from app.models.sale import SaleCreate, VoidSale, AddItemsRequest, PaySale
 from app.services.sale_service import (
     create_sale, void_sale, pay_sale, get_today_pending_fiado, add_items_to_sale,
 )
@@ -136,9 +136,10 @@ async def void_sale_endpoint(
 @router.post("/{id}/pay")
 async def pay_sale_endpoint(
     id: str,
+    body: PaySale,
     user=Depends(require_role("owner", "admin")),
 ):
-    result = pay_sale(id, user)
+    result = pay_sale(id, body, user)
     return result
 
 

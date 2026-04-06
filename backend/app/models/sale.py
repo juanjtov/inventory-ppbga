@@ -22,6 +22,10 @@ class VoidSale(BaseModel):
     reason: str
 
 
+class PaySale(BaseModel):
+    payment_method: str  # efectivo | datafono | transferencia (NOT fiado)
+
+
 class SaleItemResponse(BaseModel):
     id: str
     product_id: str
@@ -43,5 +47,7 @@ class SaleResponse(BaseModel):
     void_reason: Optional[str] = None
     created_at: str
     voided_at: Optional[str] = None
+    paid_payment_method: Optional[str] = None
+    paid_at: Optional[str] = None
     items: Optional[List[SaleItemResponse]] = None
     user_name: Optional[str] = None
