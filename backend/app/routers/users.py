@@ -6,13 +6,13 @@ from app.models.user import UserCreate, UserUpdate
 router = APIRouter()
 
 
-@router.get("/")
+@router.get("")
 async def list_users(user=Depends(require_role("owner"))):
     result = supabase.table("users").select("*").execute()
     return result.data
 
 
-@router.post("/", status_code=201)
+@router.post("", status_code=201)
 async def create_user(
     data: UserCreate, user=Depends(require_role("owner"))
 ):

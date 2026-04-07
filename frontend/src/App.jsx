@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { ToastProvider } from './contexts/ToastContext';
+import { useKeepAlive } from './hooks/useKeepAlive';
 import ProtectedRoute from './components/layout/ProtectedRoute';
 import AppLayout from './components/layout/AppLayout';
 import RoleGuard from './components/layout/RoleGuard';
@@ -21,6 +22,8 @@ import SalesHistoryPage from './pages/SalesHistoryPage';
 import ProductMovementsPage from './pages/ProductMovementsPage';
 
 function App() {
+  useKeepAlive();
+
   return (
     <AuthProvider>
       <ToastProvider>

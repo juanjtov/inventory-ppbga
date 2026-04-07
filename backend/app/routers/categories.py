@@ -10,7 +10,7 @@ class CategoryCreate(BaseModel):
     name: str
 
 
-@router.get("/")
+@router.get("")
 async def list_categories(user=Depends(get_current_user)):
     result = (
         supabase.table("categories")
@@ -21,7 +21,7 @@ async def list_categories(user=Depends(get_current_user)):
     return result.data
 
 
-@router.post("/", status_code=201)
+@router.post("", status_code=201)
 async def create_category(
     data: CategoryCreate, user=Depends(require_role("owner", "admin"))
 ):

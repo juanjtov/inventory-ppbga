@@ -6,7 +6,7 @@ from app.auth import require_role
 router = APIRouter()
 
 
-@router.get("/")
+@router.get("")
 async def list_audit_logs(
     entity_type: Optional[str] = Query(
         None, description="Tipo de entidad (ej: product, sale)"

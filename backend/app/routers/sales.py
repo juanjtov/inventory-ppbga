@@ -10,7 +10,7 @@ from typing import Optional
 router = APIRouter()
 
 
-@router.post("/")
+@router.post("")
 async def create_sale_endpoint(
     sale: SaleCreate,
     user=Depends(get_current_user),
@@ -19,7 +19,7 @@ async def create_sale_endpoint(
     return result
 
 
-@router.get("/")
+@router.get("")
 async def list_sales(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,

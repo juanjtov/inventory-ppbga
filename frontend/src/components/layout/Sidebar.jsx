@@ -31,7 +31,7 @@ export default function Sidebar() {
     api.get('/products/low-stock')
       .then(res => setAlertCount(res.data.length))
       .catch(() => {});
-  }, []);
+  }, [location.pathname]);
 
   // Close drawer on route change
   useEffect(() => {

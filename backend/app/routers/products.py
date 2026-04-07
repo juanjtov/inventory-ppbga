@@ -8,7 +8,7 @@ from typing import Optional
 router = APIRouter()
 
 
-@router.get("/")
+@router.get("")
 async def list_products(
     category_id: Optional[str] = None,
     search: Optional[str] = None,
@@ -97,7 +97,7 @@ async def get_product(id: str, user=Depends(get_current_user)):
     return p
 
 
-@router.post("/")
+@router.post("")
 async def create_product(
     product: ProductCreate,
     user=Depends(require_role("owner", "admin")),

@@ -53,12 +53,14 @@ export default function CatalogPage() {
   const isOwner = user?.role === 'owner';
 
   const fetchAll = useCallback(async () => {
+    console.log('[CatalogPage] fetchAll start', { time: performance.now() });
     try {
       const [prodRes, catRes, supRes] = await Promise.all([
         api.get('/products'),
         api.get('/categories'),
         api.get('/suppliers'),
       ]);
+      console.log('[CatalogPage] fetchAll responses received', { time: performance.now() });
       setProducts(prodRes.data);
       setCategories(catRes.data);
       setSuppliers(supRes.data);
@@ -84,6 +86,7 @@ export default function CatalogPage() {
   }
 
   function openEdit(product) {
+    console.log('[CatalogPage] openEdit called', { productId: product.id, isOwner, showModal, saving, time: performance.now() });
     if (!isOwner) return;
     setEditingProduct(product);
     setForm({
@@ -110,6 +113,7 @@ export default function CatalogPage() {
 
   async function handleSave(e) {
     e.preventDefault();
+    console.log('[CatalogPage] handleSave start', { editingProductId: editingProduct?.id, time: performance.now() });
     setSaving(true);
 
     try {
@@ -151,8 +155,10 @@ export default function CatalogPage() {
       }
 
       setShowModal(false);
+      console.log('[CatalogPage] handleSave success, setShowModal(false) called', { time: performance.now() });
       fetchAll();
     } catch (err) {
+      console.log('[CatalogPage] handleSave error', err);
       addToast(err.response?.data?.detail || 'Error al guardar', 'error');
     } finally {
       setSaving(false);
