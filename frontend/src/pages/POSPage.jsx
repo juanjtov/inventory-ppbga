@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Search, Plus, Minus, X, CreditCard, Banknote, ArrowRightLeft, UserCheck, ShoppingCart } from 'lucide-react';
+import { Search, Plus, Minus, X, CreditCard, Banknote, ArrowRightLeft, UserCheck, ShoppingCart, Split } from 'lucide-react';
 import api from '../api/client';
 import { useCart } from '../contexts/CartContext';
 import { useToast } from '../contexts/ToastContext';
 import { formatCOP } from '../lib/formatCurrency';
 import { useProductRealtime } from '../hooks/useRealtime';
 import Spinner from '../components/ui/Spinner';
+import SplitPaymentEditor from '../components/SplitPaymentEditor';
+import { isSplitValid } from '../lib/splitPayment';
 
 const PAYMENT_METHODS = [
   { key: 'efectivo', label: 'Efectivo', icon: Banknote },
@@ -30,6 +32,8 @@ export default function POSPage() {
   const [todayAccounts, setTodayAccounts] = useState([]);
   const [selectedAccountId, setSelectedAccountId] = useState(null);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
+  const [splitMode, setSplitMode] = useState(false);
+  const [splits, setSplits] = useState([]);
 
   const debounceRef = useRef(null);
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -70,6 +74,9 @@ export default function POSPage() {
   // Fetch today's open fiado accounts when payment method changes
   useEffect(() => {
     if (paymentMethod === 'fiado') {
+      // Splits and fiado are mutually exclusive — fiado is settled later.
+      setSplitMode(false);
+      setSplits([]);
       setLoadingAccounts(true);
       api.get('/sales/pending/today')
         .then(res => setTodayAccounts(res.data))
@@ -104,12 +111,16 @@ export default function POSPage() {
     }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [itemCount, submitting, paymentMethod, clientName, selectedAccountId, items, total]);
+  }, [itemCount, submitting, paymentMethod, clientName, selectedAccountId, items, total, splitMode, splits]);
 
   async function handleConfirmSale() {
     if (itemCount === 0) return;
     if (paymentMethod === 'fiado' && !selectedAccountId && !clientName.trim()) {
       addToast('Ingresa el nombre del cliente para venta por cobrar', 'error');
+      return;
+    }
+    if (splitMode && !isSplitValid(splits, total)) {
+      addToast('La suma del pago dividido debe ser igual al total', 'error');
       return;
     }
 
@@ -125,17 +136,24 @@ export default function POSPage() {
         });
         addToast('Items agregados a cuenta existente', 'success');
       } else {
-        // Create new sale
-        await api.post('/sales', {
+        // Create new sale (single method, fiado, or mixto split)
+        const body = {
           items: items.map((i) => ({
             product_id: i.product_id,
             quantity: i.quantity,
             unit_price: i.unit_price,
           })),
-          payment_method: paymentMethod,
+          payment_method: splitMode ? 'mixto' : paymentMethod,
           client_name: paymentMethod === 'fiado' ? clientName.trim() : null,
           total,
-        });
+        };
+        if (splitMode) {
+          body.payments = splits.map(s => ({
+            payment_method: s.method,
+            amount: Number(s.amount),
+          }));
+        }
+        await api.post('/sales', body);
         addToast('Venta registrada correctamente', 'success');
       }
       clearCart();
@@ -143,11 +161,27 @@ export default function POSPage() {
       setClientName('');
       setSelectedAccountId(null);
       setTodayAccounts([]);
+      setSplitMode(false);
+      setSplits([]);
       setShowCart(false);
     } catch (err) {
       addToast(err.response?.data?.detail || 'Error al registrar venta', 'error');
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  function toggleSplitMode() {
+    if (splitMode) {
+      setSplitMode(false);
+      setSplits([]);
+    } else {
+      setSplitMode(true);
+      // Pre-populate two empty rows so the editor is immediately useful
+      setSplits([
+        { method: 'efectivo', amount: '' },
+        { method: 'datafono', amount: '' },
+      ]);
     }
   }
 
@@ -214,22 +248,47 @@ export default function POSPage() {
           <span className="text-xl font-bold text-gray-900">{formatCOP(total)}</span>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          {PAYMENT_METHODS.map((pm) => (
-            <button
-              key={pm.key}
-              onClick={() => setPaymentMethod(pm.key)}
-              className={`flex flex-col items-center gap-1 rounded-lg p-2 text-xs font-medium transition-colors ${
-                paymentMethod === pm.key
-                  ? 'bg-premier-700 text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              <pm.icon className="w-4 h-4" />
-              {pm.label}
-            </button>
-          ))}
-        </div>
+        {!splitMode && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            {PAYMENT_METHODS.map((pm) => (
+              <button
+                key={pm.key}
+                onClick={() => setPaymentMethod(pm.key)}
+                className={`flex flex-col items-center gap-1 rounded-lg p-2 text-xs font-medium transition-colors ${
+                  paymentMethod === pm.key
+                    ? 'bg-premier-700 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                <pm.icon className="w-4 h-4" />
+                {pm.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Split payment toggle (disabled when fiado is the chosen intent) */}
+        <button
+          type="button"
+          onClick={toggleSplitMode}
+          disabled={paymentMethod === 'fiado'}
+          className={`w-full flex items-center justify-center gap-2 rounded-lg py-2 text-xs font-medium transition-colors border ${
+            splitMode
+              ? 'bg-premier-50 border-premier-300 text-premier-700 hover:bg-premier-100'
+              : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+          } disabled:opacity-50 disabled:cursor-not-allowed`}
+        >
+          <Split className="w-3.5 h-3.5" />
+          {splitMode ? 'Cancelar división' : 'Dividir pago'}
+        </button>
+
+        {splitMode && (
+          <SplitPaymentEditor
+            total={total}
+            splits={splits}
+            onChange={setSplits}
+          />
+        )}
 
         {paymentMethod === 'fiado' && (
           <div className="space-y-2">
@@ -277,7 +336,7 @@ export default function POSPage() {
 
         <button
           onClick={handleConfirmSale}
-          disabled={itemCount === 0 || submitting}
+          disabled={itemCount === 0 || submitting || (splitMode && !isSplitValid(splits, total))}
           className="w-full bg-premier-700 text-white font-semibold rounded-lg py-3 text-sm hover:bg-premier-800 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
         >
           {submitting ? <Spinner size="h-5 w-5" /> : 'Confirmar Venta'}

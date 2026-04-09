@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, Fragment } from 'react';
-import { Download, ChevronDown, ChevronUp, XCircle, CheckCircle, ShoppingCart, Ban, Clock, Banknote, CreditCard, ArrowRightLeft } from 'lucide-react';
+import { Download, ChevronDown, ChevronUp, XCircle, CheckCircle, ShoppingCart, Ban, Clock, Banknote, CreditCard, ArrowRightLeft, Split } from 'lucide-react';
 import api from '../api/client';
 import { useToast } from '../contexts/ToastContext';
 import { formatCOP } from '../lib/formatCurrency';
 import { todayStr } from '../lib/dateUtils';
 import Modal from '../components/ui/Modal';
 import Spinner from '../components/ui/Spinner';
+import SplitPaymentEditor from '../components/SplitPaymentEditor';
+import { isSplitValid } from '../lib/splitPayment';
 
 const PAY_METHODS = [
   { value: 'efectivo', label: 'Efectivo', icon: Banknote },
@@ -17,6 +19,7 @@ const METHOD_LABELS = {
   efectivo: 'Efectivo',
   datafono: 'Datáfono',
   transferencia: 'Transferencia',
+  mixto: 'Mixto',
 };
 
 const STATUS_OPTIONS = [
@@ -32,6 +35,7 @@ const PAYMENT_OPTIONS = [
   { value: 'datafono', label: 'Datafono' },
   { value: 'transferencia', label: 'Transferencia' },
   { value: 'fiado', label: 'Por cobrar' },
+  { value: 'mixto', label: 'Mixto' },
 ];
 
 const LIMIT = 20;
@@ -65,6 +69,8 @@ export default function SalesHistoryPage() {
   const [paying, setPaying] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [paySplitMode, setPaySplitMode] = useState(false);
+  const [paySplits, setPaySplits] = useState([]);
 
   const fetchSales = useCallback(async (newOffset = 0) => {
     setLoading(true);
@@ -117,12 +123,12 @@ export default function SalesHistoryPage() {
     }
   };
 
-  const handleMarkPaid = async (saleId, paymentMethod) => {
+  const handleMarkPaid = async (saleId, payload) => {
     setPaying(true);
     try {
-      await api.post(`/sales/${saleId}/pay`, { payment_method: paymentMethod });
+      await api.post(`/sales/${saleId}/pay`, payload);
       addToast('Marcada como pagada', 'success');
-      setPayModal({ open: false, sale: null });
+      closePayModal();
       fetchSales(offset);
     } catch (err) {
       addToast(err.response?.data?.detail || 'Error al marcar como pagada', 'error');
@@ -130,6 +136,45 @@ export default function SalesHistoryPage() {
       setPaying(false);
     }
   };
+
+  function openPayModal(sale) {
+    setPayModal({ open: true, sale });
+    setPaySplitMode(false);
+    setPaySplits([]);
+  }
+
+  function closePayModal() {
+    setPayModal({ open: false, sale: null });
+    setPaySplitMode(false);
+    setPaySplits([]);
+  }
+
+  function togglePaySplit() {
+    if (paySplitMode) {
+      setPaySplitMode(false);
+      setPaySplits([]);
+    } else {
+      setPaySplitMode(true);
+      setPaySplits([
+        { method: 'efectivo', amount: '' },
+        { method: 'datafono', amount: '' },
+      ]);
+    }
+  }
+
+  function confirmSplitPay() {
+    if (!payModal.sale) return;
+    if (!isSplitValid(paySplits, payModal.sale.total)) {
+      addToast('La suma del pago dividido debe ser igual al total', 'error');
+      return;
+    }
+    handleMarkPaid(payModal.sale.id, {
+      payments: paySplits.map(s => ({
+        payment_method: s.method,
+        amount: Number(s.amount),
+      })),
+    });
+  }
 
   const handleExport = async () => {
     setExporting(true);
@@ -266,6 +311,9 @@ export default function SalesHistoryPage() {
                               Cobrado: {METHOD_LABELS[sale.paid_payment_method] || sale.paid_payment_method}
                             </span>
                           )}
+                          {sale.payment_method === 'fiado' && sale.status === 'completed' && !sale.paid_payment_method && (
+                            <span className="block text-xs text-gray-400">Cobrado: Mixto</span>
+                          )}
                         </td>
                         <td className="px-4 py-3"><StatusBadge status={sale.status} /></td>
                         <td className="px-4 py-3">
@@ -280,7 +328,7 @@ export default function SalesHistoryPage() {
                             )}
                             {sale.status === 'pending' && (
                               <button
-                                onClick={() => setPayModal({ open: true, sale })}
+                                onClick={() => openPayModal(sale)}
                                 className="text-premier-700 hover:text-premier-700/80 text-xs font-medium"
                               >
                                 Marcar pagado
@@ -312,6 +360,19 @@ export default function SalesHistoryPage() {
                                 ))}
                               </tbody>
                             </table>
+                            {expandedSaleData[sale.id]?.payments?.length > 0 && (
+                              <div className="mt-3 pt-3 border-t border-gray-200">
+                                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Pagos</p>
+                                <ul className="text-xs text-gray-700 space-y-0.5">
+                                  {expandedSaleData[sale.id].payments.map((p) => (
+                                    <li key={p.id} className="flex justify-between">
+                                      <span>{METHOD_LABELS[p.payment_method] || p.payment_method}</span>
+                                      <span className="font-medium">{formatCOP(p.amount)}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
                           </td>
                         </tr>
                       )}
@@ -374,10 +435,10 @@ export default function SalesHistoryPage() {
         </div>
       </Modal>
 
-      {/* Pay modal: choose payment method */}
+      {/* Pay modal: choose payment method (single or split) */}
       <Modal
         isOpen={payModal.open}
-        onClose={() => !paying && setPayModal({ open: false, sale: null })}
+        onClose={() => !paying && closePayModal()}
         title="Confirmar Pago"
       >
         <p className="text-sm text-gray-600 mb-1">
@@ -386,24 +447,56 @@ export default function SalesHistoryPage() {
         <p className="text-sm text-gray-600 mb-4">
           Total: <strong>{payModal.sale ? formatCOP(payModal.sale.total) : ''}</strong>
         </p>
-        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">¿Cómo pagó?</p>
-        <div className="space-y-2">
-          {PAY_METHODS.map(({ value, label, icon: Icon }) => (
+
+        {!paySplitMode && (
+          <>
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">¿Cómo pagó?</p>
+            <div className="space-y-2">
+              {PAY_METHODS.map(({ value, label, icon: Icon }) => (
+                <button
+                  key={value}
+                  onClick={() => handleMarkPaid(payModal.sale.id, { payment_method: value })}
+                  disabled={paying}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-lg border-2 border-gray-200 hover:border-premier-700 hover:bg-premier-50 text-left text-gray-800 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Icon className="w-5 h-5 text-premier-700 flex-shrink-0" />
+                  <span className="flex-1">{label}</span>
+                  {paying && <Spinner size="h-4 w-4" />}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        {paySplitMode && payModal.sale && (
+          <div className="space-y-3">
+            <SplitPaymentEditor
+              total={payModal.sale.total}
+              splits={paySplits}
+              onChange={setPaySplits}
+            />
             <button
-              key={value}
-              onClick={() => handleMarkPaid(payModal.sale.id, value)}
-              disabled={paying}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg border-2 border-gray-200 hover:border-premier-700 hover:bg-premier-50 text-left text-gray-800 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={confirmSplitPay}
+              disabled={paying || !isSplitValid(paySplits, payModal.sale.total)}
+              className="w-full bg-premier-700 text-white font-semibold rounded-lg py-2.5 text-sm hover:bg-premier-800 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              <Icon className="w-5 h-5 text-premier-700 flex-shrink-0" />
-              <span className="flex-1">{label}</span>
-              {paying && <Spinner size="h-4 w-4" />}
+              {paying ? <Spinner size="h-4 w-4" /> : 'Confirmar pago dividido'}
             </button>
-          ))}
-        </div>
-        <div className="flex justify-end mt-4">
+          </div>
+        )}
+
+        <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
           <button
-            onClick={() => setPayModal({ open: false, sale: null })}
+            type="button"
+            onClick={togglePaySplit}
+            disabled={paying}
+            className="flex items-center gap-1 text-xs text-premier-700 hover:text-premier-800 font-medium disabled:opacity-50"
+          >
+            <Split className="w-3 h-3" />
+            {paySplitMode ? 'Pago simple' : 'Dividir cobro'}
+          </button>
+          <button
+            onClick={closePayModal}
             disabled={paying}
             className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
           >

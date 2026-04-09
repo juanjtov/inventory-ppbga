@@ -9,6 +9,7 @@ export const PAYMENT_METHODS = [
   { value: 'datafono', label: 'Datáfono' },
   { value: 'transferencia', label: 'Transferencia' },
   { value: 'fiado', label: 'Por cobrar' },
+  { value: 'mixto', label: 'Mixto' },
 ];
 
 export const SALE_STATUSES = {

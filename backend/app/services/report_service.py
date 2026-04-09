@@ -13,6 +13,9 @@ def get_daily_summary(date: str, date_from: str = None, date_to: str = None) -> 
     payment method the customer originally chose"). For the *cash flow* view
     ("what money came in today, by channel — including fiado collections"),
     see ``get_cash_closing_data``.
+
+    Mixto sales are distributed into per-method buckets via sale_payments
+    so the by_payment_method view stays meaningful.
     """
     if date_from and date_to:
         date_start = f"{date_from}T00:00:00-05:00"
@@ -35,10 +38,25 @@ def get_daily_summary(date: str, date_from: str = None, date_to: str = None) -> 
 
     by_method = {"efectivo": 0, "transferencia": 0, "datafono": 0, "fiado": 0}
     fiado_pending = 0
+    mixto_sale_ids = []
     for s in sales.data:
+        if s["payment_method"] == "mixto":
+            mixto_sale_ids.append(s["id"])
+            continue
         by_method[s["payment_method"]] = by_method.get(s["payment_method"], 0) + s["total"]
         if s["status"] == "pending":
             fiado_pending += s["total"]
+
+    # Distribute mixto totals across their component methods
+    if mixto_sale_ids:
+        splits = (
+            supabase.table("sale_payments")
+            .select("payment_method, amount")
+            .in_("sale_id", mixto_sale_ids)
+            .execute()
+        )
+        for sp in splits.data:
+            by_method[sp["payment_method"]] = by_method.get(sp["payment_method"], 0) + sp["amount"]
 
     # Voided sales count
     voided = (
@@ -129,28 +147,37 @@ def get_cash_closing_data(date: str) -> dict:
 
     date_start, date_end = date_range_col(date)
 
-    # Bucket A: non-fiado sales created today (settled instantly)
-    instant = (
-        supabase.table("sales")
-        .select("payment_method, total, status")
-        .gte("created_at", date_start)
-        .lte("created_at", date_end)
-        .neq("payment_method", "fiado")
+    # Money received today, per channel — single source of truth is now the
+    # sale_payments table, joined to sales to filter out voided sales.
+    payments_today = (
+        supabase.table("sale_payments")
+        .select("payment_method, amount, sales!inner(status)")
+        .gte("paid_at", date_start)
+        .lte("paid_at", date_end)
+        .neq("sales.status", "voided")
         .execute()
     )
 
-    # Bucket B: fiado sales paid today (regardless of when originally created)
+    totals = {"efectivo": 0, "transferencia": 0, "datafono": 0}
+    for p in payments_today.data:
+        if p["payment_method"] in totals:
+            totals[p["payment_method"]] += p["amount"]
+
+    # Credit collected today: every fiado sale settled today contributes its
+    # full total exactly once, regardless of how it was paid (single method,
+    # split, or legacy NULL paid_payment_method).
     collected = (
         supabase.table("sales")
-        .select("paid_payment_method, total")
+        .select("total")
         .eq("payment_method", "fiado")
         .eq("status", "completed")
         .gte("paid_at", date_start)
         .lte("paid_at", date_end)
         .execute()
     )
+    total_credit_collected = sum(s["total"] for s in collected.data)
 
-    # Bucket C: fiado sales CREATED today (informational — credit issued today)
+    # Credit issued today: fiado sales CREATED today (regardless of paid status)
     issued = (
         supabase.table("sales")
         .select("total, status")
@@ -160,7 +187,7 @@ def get_cash_closing_data(date: str) -> dict:
         .execute()
     )
 
-    # Bucket D: voided sales created today
+    # Voided sales created today
     voided = (
         supabase.table("sales")
         .select("total")
@@ -170,7 +197,7 @@ def get_cash_closing_data(date: str) -> dict:
         .execute()
     )
 
-    # Bucket E: snapshot of all currently-pending fiado
+    # Snapshot of all currently-pending fiado
     outstanding = (
         supabase.table("sales")
         .select("total")
@@ -179,22 +206,7 @@ def get_cash_closing_data(date: str) -> dict:
         .execute()
     )
 
-    totals = {"efectivo": 0, "transferencia": 0, "datafono": 0}
-    for s in instant.data:
-        if s["status"] == "voided":
-            continue
-        if s["payment_method"] in totals:
-            totals[s["payment_method"]] += s["total"]
-    for s in collected.data:
-        # Legacy paid fiado (pre-migration) has NULL paid_payment_method.
-        # We can't attribute it to a channel, so it stays out of the per-method
-        # totals — surfaced separately via total_credit_collected.
-        method = s.get("paid_payment_method")
-        if method in totals:
-            totals[method] += s["total"]
-
     total_credit_issued = sum(s["total"] for s in issued.data if s["status"] != "voided")
-    total_credit_collected = sum(s["total"] for s in collected.data)
     total_credit_outstanding = sum(s["total"] for s in outstanding.data)
     total_voided = sum(s["total"] for s in voided.data)
     total_money_in = totals["efectivo"] + totals["transferencia"] + totals["datafono"]
@@ -499,19 +511,40 @@ def export_sales_csv(date_from: str, date_to: str) -> str:
         .execute()
     )
 
+    # Batch-fetch payment splits for any mixto sales in the result set so
+    # we can expand them into the Detalle de Pago column.
+    sale_ids = [s["id"] for s in sales.data]
+    payments_by_sale: dict = {}
+    if sale_ids:
+        splits = (
+            supabase.table("sale_payments")
+            .select("sale_id, payment_method, amount")
+            .in_("sale_id", sale_ids)
+            .execute()
+        )
+        for sp in splits.data:
+            payments_by_sale.setdefault(sp["sale_id"], []).append(sp)
+
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
-        "Fecha", "Vendedor", "Total", "Método de Pago",
+        "Fecha", "Vendedor", "Total", "Método de Pago", "Detalle de Pago",
         "Estado", "Cliente", "Notas",
     ])
 
     for s in sales.data:
+        detail = ""
+        if s["payment_method"] == "mixto":
+            detail = "; ".join(
+                f"{p['payment_method']}:{p['amount']}"
+                for p in payments_by_sale.get(s["id"], [])
+            )
         writer.writerow([
             s["created_at"],
             s.get("users", {}).get("full_name", "") if s.get("users") else "",
             s["total"],
             s["payment_method"],
+            detail,
             s["status"],
             s.get("client_name", ""),
             s.get("notes", ""),

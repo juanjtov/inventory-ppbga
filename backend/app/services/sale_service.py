@@ -7,6 +7,65 @@ from app.timezone import col_now, date_range_col
 VALID_PAY_METHODS = {"efectivo", "datafono", "transferencia"}
 
 
+def _validate_split(payments, expected_total: int):
+    """Validate a split-payment list. Raises HTTPException(400) on any issue.
+
+    Rules:
+    - At least 2 entries.
+    - Each method must be in VALID_PAY_METHODS (no fiado, no mixto).
+    - No method may appear twice (uniqueness keeps reconciliation simple).
+    - Each amount must be > 0.
+    - The sum of amounts must equal expected_total exactly.
+    """
+    if not payments or len(payments) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Un pago dividido debe tener al menos 2 métodos",
+        )
+    seen = set()
+    total = 0
+    for p in payments:
+        if p.payment_method not in VALID_PAY_METHODS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Método inválido en split: {p.payment_method}",
+            )
+        if p.payment_method in seen:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Método duplicado en split: {p.payment_method}",
+            )
+        if p.amount <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Cada monto del split debe ser mayor a 0",
+            )
+        seen.add(p.payment_method)
+        total += p.amount
+    if total != expected_total:
+        raise HTTPException(
+            status_code=400,
+            detail=f"La suma del split ({total}) no coincide con el total ({expected_total})",
+        )
+
+
+def _insert_sale_payments(sale_id: str, entries, paid_at: str, user_id: str):
+    """Insert one or more sale_payments rows. ``entries`` is a list of
+    (payment_method, amount) tuples."""
+    rows = [
+        {
+            "sale_id": sale_id,
+            "payment_method": method,
+            "amount": amount,
+            "paid_at": paid_at,
+            "created_by": user_id,
+        }
+        for method, amount in entries
+    ]
+    if rows:
+        supabase.table("sale_payments").insert(rows).execute()
+
+
 def create_sale(data: SaleCreate, user: dict) -> dict:
     """Create a sale with atomic stock decrement."""
     # Validate fiado requires client_name
@@ -53,7 +112,11 @@ def create_sale(data: SaleCreate, user: dict) -> dict:
         })
         total += subtotal
 
-    # Determine status
+    # Validate split payments if mixto
+    if data.payment_method == "mixto":
+        _validate_split(data.payments, total)
+
+    # Determine status — only fiado is pending; mixto is settled instantly
     status = "pending" if data.payment_method == "fiado" else "completed"
 
     # Insert sale
@@ -98,6 +161,16 @@ def create_sale(data: SaleCreate, user: dict) -> dict:
             supabase.table("products").update({"stock": new_stock}).eq(
                 "id", item_data["product_id"]
             ).execute()
+
+    # Record sale_payments rows for any settled-instantly sale.
+    # Fiado has no money to attribute yet — that happens in pay_sale().
+    if data.payment_method != "fiado":
+        paid_at = col_now().isoformat()
+        if data.payment_method == "mixto":
+            entries = [(p.payment_method, p.amount) for p in data.payments]
+        else:
+            entries = [(data.payment_method, total)]
+        _insert_sale_payments(sale["id"], entries, paid_at, user["id"])
 
     # Fetch complete sale with items
     return get_sale_detail(sale["id"])
@@ -232,6 +305,116 @@ def add_items_to_sale(sale_id: str, data: AddItemsRequest, user: dict) -> dict:
     return get_sale_detail(sale_id)
 
 
+def remove_item_from_sale(sale_id: str, item_id: str, user: dict) -> dict:
+    """Remove a single line item from a pending fiado sale and restock the product.
+
+    If the last item is removed, the sale is auto-voided so it disappears from
+    Cuentas Abiertas instead of lingering as an empty open account.
+    """
+    # Fetch and validate the sale
+    try:
+        sale = (
+            supabase.table("sales")
+            .select("*")
+            .eq("id", sale_id)
+            .single()
+            .execute()
+        )
+    except Exception:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+
+    if not sale.data:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+
+    if sale.data["status"] != "pending":
+        raise HTTPException(
+            status_code=400,
+            detail="Solo se pueden eliminar items de ventas pendientes",
+        )
+
+    if sale.data["payment_method"] != "fiado":
+        raise HTTPException(
+            status_code=400,
+            detail="Solo se pueden eliminar items de cuentas por cobrar",
+        )
+
+    # Fetch the sale_item and verify it belongs to this sale
+    try:
+        item = (
+            supabase.table("sale_items")
+            .select("*, products(type)")
+            .eq("id", item_id)
+            .single()
+            .execute()
+        )
+    except Exception:
+        raise HTTPException(status_code=404, detail="Item no encontrado en esta venta")
+
+    if not item.data or item.data["sale_id"] != sale_id:
+        raise HTTPException(status_code=404, detail="Item no encontrado en esta venta")
+
+    item_data = item.data
+    product_info = item_data.get("products") or {}
+    is_product = product_info.get("type") == "product"
+
+    # Restock product (services don't track stock)
+    if is_product:
+        prod = (
+            supabase.table("products")
+            .select("stock")
+            .eq("id", item_data["product_id"])
+            .single()
+            .execute()
+        )
+        current_stock = prod.data["stock"] or 0
+        supabase.table("products").update(
+            {"stock": current_stock + item_data["quantity"]}
+        ).eq("id", item_data["product_id"]).execute()
+
+    # Delete the sale_item
+    supabase.table("sale_items").delete().eq("id", item_id).execute()
+
+    # Compute new total
+    new_total = sale.data["total"] - item_data["subtotal"]
+
+    # Audit log
+    supabase.table("audit_log").insert({
+        "user_id": user["id"],
+        "action": "fiado_remove_item",
+        "entity_type": "sale",
+        "entity_id": sale_id,
+        "old_values": {
+            "total": sale.data["total"],
+            "removed_item": {
+                "product_id": item_data["product_id"],
+                "quantity": item_data["quantity"],
+                "subtotal": item_data["subtotal"],
+            },
+        },
+        "new_values": {"total": new_total},
+    }).execute()
+
+    # If the sale is now empty, auto-void it (cleaner than leaving an empty fiado)
+    remaining = (
+        supabase.table("sale_items")
+        .select("id")
+        .eq("sale_id", sale_id)
+        .execute()
+    )
+    if not remaining.data:
+        supabase.table("sales").update({
+            "status": "voided",
+            "voided_by": user["id"],
+            "void_reason": "Auto-anulada: todos los items eliminados",
+            "voided_at": col_now().isoformat(),
+            "total": 0,
+        }).eq("id", sale_id).execute()
+    else:
+        supabase.table("sales").update({"total": new_total}).eq("id", sale_id).execute()
+
+    return get_sale_detail(sale_id)
+
+
 def void_sale(sale_id: str, reason: str, user: dict) -> dict:
     """Void a sale and restore stock."""
     sale = (
@@ -280,6 +463,10 @@ def void_sale(sale_id: str, reason: str, user: dict) -> dict:
 
     # Update sale status. Clear paid_payment_method and paid_at so a voided
     # sale never contributes to any cash closing aggregation.
+    # Note: we deliberately do NOT delete sale_payments rows. The cash
+    # closing query joins on sales.status != 'voided' so voided rows are
+    # filtered out, preserving the audit trail (mirrors how sale_items are
+    # kept on void).
     supabase.table("sales").update({
         "status": "voided",
         "voided_by": user["id"],
@@ -293,8 +480,27 @@ def void_sale(sale_id: str, reason: str, user: dict) -> dict:
 
 
 def pay_sale(sale_id: str, data: PaySale, user: dict) -> dict:
-    """Mark a pending fiado sale as completed and record how it was settled."""
-    if data.payment_method not in VALID_PAY_METHODS:
+    """Mark a pending fiado sale as completed and record how it was settled.
+
+    Accepts either a single ``payment_method`` (legacy single-channel
+    settlement) or a ``payments`` list (split settlement). Exactly one of
+    the two must be provided.
+    """
+    has_single = data.payment_method is not None
+    has_split = data.payments is not None and len(data.payments) > 0
+
+    if has_single and has_split:
+        raise HTTPException(
+            status_code=400,
+            detail="Provee solo payment_method o payments, no ambos",
+        )
+    if not has_single and not has_split:
+        raise HTTPException(
+            status_code=400,
+            detail="Debes proveer payment_method o payments",
+        )
+
+    if has_single and data.payment_method not in VALID_PAY_METHODS:
         raise HTTPException(
             status_code=400,
             detail=f"Método de pago inválido. Debe ser uno de: {', '.join(sorted(VALID_PAY_METHODS))}",
@@ -316,32 +522,61 @@ def pay_sale(sale_id: str, data: PaySale, user: dict) -> dict:
             detail="Solo se pueden cobrar ventas pendientes (fiado)",
         )
 
-    paid_at = col_now().isoformat()
-    supabase.table("sales").update({
-        "status": "completed",
-        "paid_payment_method": data.payment_method,
-        "paid_at": paid_at,
-    }).eq("id", sale_id).execute()
+    if has_split:
+        _validate_split(data.payments, sale.data["total"])
 
-    # Audit log — record both the status flip and the settlement method
+    paid_at = col_now().isoformat()
+
+    if has_single:
+        # Single-method settlement keeps paid_payment_method populated
+        # (backwards compatible with migration 002 reporting)
+        sale_update = {
+            "status": "completed",
+            "paid_payment_method": data.payment_method,
+            "paid_at": paid_at,
+        }
+        entries = [(data.payment_method, sale.data["total"])]
+        audit_new_values = {
+            "status": "completed",
+            "paid_payment_method": data.payment_method,
+            "paid_at": paid_at,
+        }
+    else:
+        # Split settlement: leave paid_payment_method NULL — the per-channel
+        # attribution lives in sale_payments rows.
+        sale_update = {
+            "status": "completed",
+            "paid_payment_method": None,
+            "paid_at": paid_at,
+        }
+        entries = [(p.payment_method, p.amount) for p in data.payments]
+        audit_new_values = {
+            "status": "completed",
+            "paid_at": paid_at,
+            "payments": [
+                {"payment_method": p.payment_method, "amount": p.amount}
+                for p in data.payments
+            ],
+        }
+
+    supabase.table("sales").update(sale_update).eq("id", sale_id).execute()
+    _insert_sale_payments(sale_id, entries, paid_at, user["id"])
+
+    # Audit log — record both the status flip and the settlement attribution
     supabase.table("audit_log").insert({
         "user_id": user["id"],
         "action": "fiado_paid",
         "entity_type": "sale",
         "entity_id": sale_id,
         "old_values": {"status": "pending"},
-        "new_values": {
-            "status": "completed",
-            "paid_payment_method": data.payment_method,
-            "paid_at": paid_at,
-        },
+        "new_values": audit_new_values,
     }).execute()
 
     return get_sale_detail(sale_id)
 
 
 def get_sale_detail(sale_id: str) -> dict:
-    """Get sale with items and product names."""
+    """Get sale with items, payments, and product names."""
     sale = (
         supabase.table("sales")
         .select("*, users!sales_user_id_fkey(full_name)")
@@ -367,5 +602,14 @@ def get_sale_detail(sale_id: str) -> dict:
         item["product_name"] = item.get("products", {}).get("name") if item.get("products") else None
         item.pop("products", None)
         s["items"].append(item)
+
+    payments = (
+        supabase.table("sale_payments")
+        .select("id, payment_method, amount, paid_at")
+        .eq("sale_id", sale_id)
+        .order("created_at")
+        .execute()
+    )
+    s["payments"] = payments.data or []
 
     return s

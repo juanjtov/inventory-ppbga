@@ -20,6 +20,7 @@ def _today_str():
 def _cleanup_sale(supabase_client, sale_id):
     """FK-safe hard-delete of a single test sale and its dependents."""
     supabase_client.table("audit_log").delete().eq("entity_type", "sale").eq("entity_id", sale_id).execute()
+    supabase_client.table("sale_payments").delete().eq("sale_id", sale_id).execute()
     supabase_client.table("sale_items").delete().eq("sale_id", sale_id).execute()
     supabase_client.table("sales").delete().eq("id", sale_id).execute()
 
@@ -118,7 +119,7 @@ def test_pay_rejects_unknown_method(client, auth_headers, test_product_id, supab
 
 
 def test_pay_requires_payment_method_field(client, auth_headers, test_product_id, supabase_client):
-    """The /pay endpoint requires the payment_method field in the body."""
+    """The /pay endpoint requires either payment_method or payments in the body."""
     sale = _create_fiado(client, auth_headers, test_product_id, "__test_pay_missing_field__")
     sale_id = sale["id"]
     try:
@@ -127,8 +128,8 @@ def test_pay_requires_payment_method_field(client, auth_headers, test_product_id
             json={},
             headers=auth_headers,
         )
-        # FastAPI returns 422 for missing required body fields
-        assert res.status_code == 422
+        # Service layer rejects empty body with 400 (split-payments era)
+        assert res.status_code == 400
     finally:
         _cleanup_sale(supabase_client, sale_id)
 
@@ -188,7 +189,9 @@ def test_cash_closing_includes_fiado_collected_in_cash(client, auth_headers, tes
         after = client.get(f"/api/v1/reports/cash-closing?date={date}", headers=auth_headers).json()
         assert after["total_cash"] == baseline_cash + sale_total
         assert after["total_credit_collected"] == baseline_collected + sale_total
-        assert after["total_credit_outstanding"] == baseline_outstanding  # unchanged: was created today, still nets out
+        # Outstanding is a snapshot of all currently-pending fiado. Paying one
+        # moves it from pending to completed, so the snapshot drops by sale_total.
+        assert after["total_credit_outstanding"] == baseline_outstanding - sale_total
     finally:
         _cleanup_sale(supabase_client, sale_id)
 

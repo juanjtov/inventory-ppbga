@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.database import supabase
 from app.auth import get_current_user, require_role
-from app.models.sale import SaleCreate, VoidSale, AddItemsRequest, PaySale
+from app.models.sale import (
+    SaleCreate, VoidSale, AddItemsRequest, PaySale, RemoveItemRequest,
+)
 from app.services.sale_service import (
-    create_sale, void_sale, pay_sale, get_today_pending_fiado, add_items_to_sale,
+    create_sale, void_sale, pay_sale, get_today_pending_fiado,
+    add_items_to_sale, remove_item_from_sale, get_sale_detail,
 )
 from typing import Optional
 
@@ -90,36 +93,11 @@ async def get_sale(
     user=Depends(require_role("owner", "admin")),
 ):
     try:
-        result = (
-            supabase.table("sales")
-            .select("*, users!sales_user_id_fkey(full_name)")
-            .eq("id", id)
-            .single()
-            .execute()
-        )
+        sale = get_sale_detail(id)
     except Exception:
         raise HTTPException(status_code=404, detail="Venta no encontrada")
-
-    if not result.data:
+    if not sale:
         raise HTTPException(status_code=404, detail="Venta no encontrada")
-
-    sale = result.data
-    sale["user_name"] = (sale.pop("users", {}) or {}).get("full_name")
-
-    items_result = (
-        supabase.table("sale_items")
-        .select("*, products(name)")
-        .eq("sale_id", id)
-        .execute()
-    )
-
-    items = []
-    for item in items_result.data:
-        item["product_name"] = (item.pop("products", {}) or {}).get("name")
-        items.append(item)
-
-    sale["items"] = items
-
     return sale
 
 
@@ -151,3 +129,12 @@ async def add_items_endpoint(
 ):
     result = add_items_to_sale(id, body, user)
     return result
+
+
+@router.post("/{id}/remove-item")
+async def remove_item_endpoint(
+    id: str,
+    body: RemoveItemRequest,
+    user=Depends(require_role("owner", "admin")),
+):
+    return remove_item_from_sale(id, body.item_id, user)

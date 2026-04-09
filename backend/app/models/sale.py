@@ -7,15 +7,25 @@ class SaleItemCreate(BaseModel):
     quantity: int
 
 
+class PaymentSplit(BaseModel):
+    payment_method: str  # efectivo | datafono | transferencia (never fiado/mixto)
+    amount: int
+
+
 class SaleCreate(BaseModel):
     items: List[SaleItemCreate]
-    payment_method: str  # efectivo, transferencia, datafono, fiado
+    payment_method: str  # efectivo, transferencia, datafono, fiado, mixto
     client_name: Optional[str] = None
     notes: Optional[str] = None
+    payments: Optional[List[PaymentSplit]] = None  # required when payment_method == 'mixto'
 
 
 class AddItemsRequest(BaseModel):
     items: List[SaleItemCreate]
+
+
+class RemoveItemRequest(BaseModel):
+    item_id: str
 
 
 class VoidSale(BaseModel):
@@ -23,7 +33,9 @@ class VoidSale(BaseModel):
 
 
 class PaySale(BaseModel):
-    payment_method: str  # efectivo | datafono | transferencia (NOT fiado)
+    # Exactly one of these must be provided.
+    payment_method: Optional[str] = None  # efectivo | datafono | transferencia (never fiado)
+    payments: Optional[List[PaymentSplit]] = None  # for split settlements
 
 
 class SaleItemResponse(BaseModel):
@@ -33,6 +45,13 @@ class SaleItemResponse(BaseModel):
     unit_price: int
     subtotal: int
     product_name: Optional[str] = None
+
+
+class SalePaymentResponse(BaseModel):
+    id: str
+    payment_method: str
+    amount: int
+    paid_at: str
 
 
 class SaleResponse(BaseModel):
@@ -50,4 +69,5 @@ class SaleResponse(BaseModel):
     paid_payment_method: Optional[str] = None
     paid_at: Optional[str] = None
     items: Optional[List[SaleItemResponse]] = None
+    payments: Optional[List[SalePaymentResponse]] = None
     user_name: Optional[str] = None
