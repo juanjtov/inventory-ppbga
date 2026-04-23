@@ -5,7 +5,7 @@ import api from '../../api/client';
 import {
   ShoppingCart, Package, Users, Calculator, BarChart3,
   BookOpen, UserCog, AlertTriangle, ReceiptText, LogOut,
-  Menu, X,
+  ClipboardCheck, Menu, X,
 } from 'lucide-react';
 
 const navItems = [
@@ -15,6 +15,7 @@ const navItems = [
   { path: '/corte-caja', label: 'Corte de Caja', icon: Calculator, roles: ['owner', 'admin'] },
   { path: '/ventas', label: 'Historial de Ventas', icon: ReceiptText, roles: ['owner', 'admin'] },
   { path: '/reportes', label: 'Reportes', icon: BarChart3, roles: ['owner'] },
+  { path: '/inventario/ajustes', label: 'Ajustes de Stock', icon: ClipboardCheck, roles: ['owner'] },
   { path: '/catalogo', label: 'Catalogo', icon: BookOpen, roles: ['owner', 'admin'] },
   { path: '/usuarios', label: 'Usuarios', icon: UserCog, roles: ['owner'] },
   { path: '/alertas', label: 'Alertas', icon: AlertTriangle, roles: ['owner', 'admin'], hasBadge: true },

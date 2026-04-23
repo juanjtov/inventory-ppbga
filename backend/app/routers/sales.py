@@ -7,6 +7,7 @@ from app.models.sale import (
 from app.services.sale_service import (
     create_sale, void_sale, pay_sale, get_today_pending_fiado,
     add_items_to_sale, remove_item_from_sale, get_sale_detail,
+    get_sales_summary,
 )
 from typing import Optional
 
@@ -54,6 +55,22 @@ async def list_sales(
         sales.append(s)
 
     return sales
+
+
+@router.get("/summary")
+async def sales_summary(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    status: Optional[str] = None,
+    payment_method: Optional[str] = None,
+    user=Depends(require_role("owner", "admin")),
+):
+    return get_sales_summary(
+        date_from=date_from,
+        date_to=date_to,
+        status=status,
+        payment_method=payment_method,
+    )
 
 
 @router.get("/pending")

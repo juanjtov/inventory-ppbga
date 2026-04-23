@@ -7,6 +7,36 @@ from app.timezone import col_now, date_range_col
 VALID_PAY_METHODS = {"efectivo", "datafono", "transferencia"}
 
 
+def _atomic_decrement(product_id: str, qty: int) -> int:
+    """Atomically decrement product stock. Raises HTTPException(400) if
+    stock would go negative or the product is not stock-tracked."""
+    try:
+        res = supabase.rpc(
+            "decrement_stock",
+            {"p_product_id": product_id, "p_qty": qty},
+        ).execute()
+    except Exception as e:
+        msg = str(e).lower()
+        if "insufficient_stock" in msg:
+            raise HTTPException(
+                status_code=400, detail="Stock insuficiente"
+            )
+        raise HTTPException(status_code=500, detail="Error actualizando stock")
+    return res.data
+
+
+def _atomic_increment(product_id: str, qty: int) -> int:
+    """Atomically increment product stock (restock path). Raises 500 on error."""
+    try:
+        res = supabase.rpc(
+            "increment_stock",
+            {"p_product_id": product_id, "p_qty": qty},
+        ).execute()
+    except Exception:
+        raise HTTPException(status_code=500, detail="Error actualizando stock")
+    return res.data
+
+
 def _validate_split(payments, expected_total: int):
     """Validate a split-payment list. Raises HTTPException(400) on any issue.
 
@@ -131,7 +161,7 @@ def create_sale(data: SaleCreate, user: dict) -> dict:
     sale_result = supabase.table("sales").insert(sale_data).execute()
     sale = sale_result.data[0]
 
-    # Insert sale items and decrement stock
+    # Insert sale items and atomically decrement stock
     for item_data in items_data:
         sale_item = {
             "sale_id": sale["id"],
@@ -142,25 +172,8 @@ def create_sale(data: SaleCreate, user: dict) -> dict:
         }
         supabase.table("sale_items").insert(sale_item).execute()
 
-        # Decrement stock for products (not services)
         if item_data["product_type"] == "product":
-            # Atomic decrement using RPC or direct update
-            product = (
-                supabase.table("products")
-                .select("stock")
-                .eq("id", item_data["product_id"])
-                .single()
-                .execute()
-            )
-            new_stock = product.data["stock"] - item_data["quantity"]
-            if new_stock < 0:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Stock insuficiente (condición de carrera detectada)",
-                )
-            supabase.table("products").update({"stock": new_stock}).eq(
-                "id", item_data["product_id"]
-            ).execute()
+            _atomic_decrement(item_data["product_id"], item_data["quantity"])
 
     # Record sale_payments rows for any settled-instantly sale.
     # Fiado has no money to attribute yet — that happens in pay_sale().
@@ -172,8 +185,65 @@ def create_sale(data: SaleCreate, user: dict) -> dict:
             entries = [(data.payment_method, total)]
         _insert_sale_payments(sale["id"], entries, paid_at, user["id"])
 
+    # Audit log
+    supabase.table("audit_log").insert({
+        "user_id": user["id"],
+        "action": "sale_created",
+        "entity_type": "sale",
+        "entity_id": sale["id"],
+        "old_values": None,
+        "new_values": {
+            "total": total,
+            "payment_method": data.payment_method,
+            "status": status,
+            "client_name": data.client_name,
+            "item_count": len(items_data),
+        },
+    }).execute()
+
     # Fetch complete sale with items
     return get_sale_detail(sale["id"])
+
+
+def get_sales_summary(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    status: str | None = None,
+    payment_method: str | None = None,
+) -> dict:
+    """Range-wide sales totals — independent of list pagination.
+
+    Returns the four cards shown on Historial de Ventas:
+      - total_count: count of sales matching the filters
+      - total_amount: sum of sale.total where status != 'voided'
+      - voided_count: count where status == 'voided'
+      - fiado_pending: sum of sale.total where status='pending' AND
+        payment_method='fiado' (matches the "por cobrar" KPI)
+    """
+    query = supabase.table("sales").select("total, status, payment_method")
+    if date_from:
+        query = query.gte("created_at", f"{date_from}T00:00:00-05:00")
+    if date_to:
+        query = query.lte("created_at", f"{date_to}T23:59:59-05:00")
+    if status:
+        query = query.eq("status", status)
+    if payment_method:
+        query = query.eq("payment_method", payment_method)
+    result = query.execute()
+
+    total_count = len(result.data)
+    total_amount = sum(s["total"] for s in result.data if s["status"] != "voided")
+    voided_count = sum(1 for s in result.data if s["status"] == "voided")
+    fiado_pending = sum(
+        s["total"] for s in result.data
+        if s["status"] == "pending" and s["payment_method"] == "fiado"
+    )
+    return {
+        "total_count": total_count,
+        "total_amount": total_amount,
+        "voided_count": voided_count,
+        "fiado_pending": fiado_pending,
+    }
 
 
 def get_today_pending_fiado() -> list:
@@ -259,7 +329,7 @@ def add_items_to_sale(sale_id: str, data: AddItemsRequest, user: dict) -> dict:
         })
         added_total += subtotal
 
-    # Insert new sale items and decrement stock
+    # Insert new sale items and atomically decrement stock
     for item_data in items_data:
         sale_item = {
             "sale_id": sale_id,
@@ -271,22 +341,7 @@ def add_items_to_sale(sale_id: str, data: AddItemsRequest, user: dict) -> dict:
         supabase.table("sale_items").insert(sale_item).execute()
 
         if item_data["product_type"] == "product":
-            product = (
-                supabase.table("products")
-                .select("stock")
-                .eq("id", item_data["product_id"])
-                .single()
-                .execute()
-            )
-            new_stock = product.data["stock"] - item_data["quantity"]
-            if new_stock < 0:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Stock insuficiente (condición de carrera detectada)",
-                )
-            supabase.table("products").update({"stock": new_stock}).eq(
-                "id", item_data["product_id"]
-            ).execute()
+            _atomic_decrement(item_data["product_id"], item_data["quantity"])
 
     # Update sale total
     new_total = sale.data["total"] + added_total
@@ -357,19 +412,9 @@ def remove_item_from_sale(sale_id: str, item_id: str, user: dict) -> dict:
     product_info = item_data.get("products") or {}
     is_product = product_info.get("type") == "product"
 
-    # Restock product (services don't track stock)
+    # Restock product (services don't track stock) — atomic
     if is_product:
-        prod = (
-            supabase.table("products")
-            .select("stock")
-            .eq("id", item_data["product_id"])
-            .single()
-            .execute()
-        )
-        current_stock = prod.data["stock"] or 0
-        supabase.table("products").update(
-            {"stock": current_stock + item_data["quantity"]}
-        ).eq("id", item_data["product_id"]).execute()
+        _atomic_increment(item_data["product_id"], item_data["quantity"])
 
     # Delete the sale_item
     supabase.table("sale_items").delete().eq("id", item_id).execute()
@@ -447,19 +492,9 @@ def void_sale(sale_id: str, reason: str, user: dict) -> dict:
             pid = item["product_id"]
             restore_map[pid] = restore_map.get(pid, 0) + item["quantity"]
 
-    # Restore stock per product (read fresh stock to avoid stale join data)
+    # Restore stock per product — atomic
     for pid, qty in restore_map.items():
-        product = (
-            supabase.table("products")
-            .select("stock")
-            .eq("id", pid)
-            .single()
-            .execute()
-        )
-        current_stock = product.data["stock"] or 0
-        supabase.table("products").update({"stock": current_stock + qty}).eq(
-            "id", pid
-        ).execute()
+        _atomic_increment(pid, qty)
 
     # Update sale status. Clear paid_payment_method and paid_at so a voided
     # sale never contributes to any cash closing aggregation.
@@ -467,6 +502,7 @@ def void_sale(sale_id: str, reason: str, user: dict) -> dict:
     # closing query joins on sales.status != 'voided' so voided rows are
     # filtered out, preserving the audit trail (mirrors how sale_items are
     # kept on void).
+    old_status = sale.data["status"]
     supabase.table("sales").update({
         "status": "voided",
         "voided_by": user["id"],
@@ -475,6 +511,16 @@ def void_sale(sale_id: str, reason: str, user: dict) -> dict:
         "paid_payment_method": None,
         "paid_at": None,
     }).eq("id", sale_id).execute()
+
+    # Audit log
+    supabase.table("audit_log").insert({
+        "user_id": user["id"],
+        "action": "sale_voided",
+        "entity_type": "sale",
+        "entity_id": sale_id,
+        "old_values": {"status": old_status},
+        "new_values": {"status": "voided", "reason": reason},
+    }).execute()
 
     return get_sale_detail(sale_id)
 

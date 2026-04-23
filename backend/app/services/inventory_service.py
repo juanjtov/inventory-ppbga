@@ -3,6 +3,31 @@ from app.database import supabase
 from app.models.inventory import InventoryEntryCreate, InternalUseCreate
 
 
+def _atomic_increment(product_id: str, qty: int) -> int:
+    try:
+        res = supabase.rpc(
+            "increment_stock",
+            {"p_product_id": product_id, "p_qty": qty},
+        ).execute()
+    except Exception:
+        raise HTTPException(status_code=500, detail="Error actualizando stock")
+    return res.data
+
+
+def _atomic_decrement(product_id: str, qty: int) -> int:
+    try:
+        res = supabase.rpc(
+            "decrement_stock",
+            {"p_product_id": product_id, "p_qty": qty},
+        ).execute()
+    except Exception as e:
+        msg = str(e).lower()
+        if "insufficient_stock" in msg:
+            raise HTTPException(status_code=400, detail="Stock insuficiente")
+        raise HTTPException(status_code=500, detail="Error actualizando stock")
+    return res.data
+
+
 def create_entry(data: InventoryEntryCreate, user: dict) -> dict:
     """Create inventory entry (restock) and increment product stock."""
     # Get current product
@@ -48,12 +73,24 @@ def create_entry(data: InventoryEntryCreate, user: dict) -> dict:
             "new_values": {"purchase_price": data.actual_price},
         }).execute()
 
-    # Increment stock
-    current_stock = p["stock"] if p["stock"] is not None else 0
-    new_stock = current_stock + data.quantity
-    supabase.table("products").update({"stock": new_stock}).eq(
-        "id", data.product_id
-    ).execute()
+    # Increment stock — atomic
+    _atomic_increment(data.product_id, data.quantity)
+
+    # Audit log
+    supabase.table("audit_log").insert({
+        "user_id": user["id"],
+        "action": "inventory_entry_created",
+        "entity_type": "inventory_entry",
+        "entity_id": result.data[0]["id"],
+        "old_values": None,
+        "new_values": {
+            "product_id": data.product_id,
+            "quantity": data.quantity,
+            "actual_price": actual_price,
+            "supplier_id": data.supplier_id,
+            "price_confirmed": data.price_confirmed,
+        },
+    }).execute()
 
     return result.data[0]
 
@@ -78,16 +115,13 @@ def create_internal_use(data: InternalUseCreate, user: dict) -> dict:
             status_code=400, detail="No se puede registrar uso interno de un servicio"
         )
 
-    if p["stock"] is None or p["stock"] < data.quantity:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Stock insuficiente. Disponible: {p.get('stock', 0)}, solicitado: {data.quantity}",
-        )
-
     if len(data.reason.strip()) < 5:
         raise HTTPException(
             status_code=400, detail="La razón debe tener al menos 5 caracteres"
         )
+
+    # Atomic decrement enforces stock >= qty and raises 400 if insufficient
+    _atomic_decrement(data.product_id, data.quantity)
 
     # Insert internal use
     use_data = {
@@ -98,11 +132,19 @@ def create_internal_use(data: InternalUseCreate, user: dict) -> dict:
     }
     result = supabase.table("internal_use").insert(use_data).execute()
 
-    # Decrement stock
-    new_stock = p["stock"] - data.quantity
-    supabase.table("products").update({"stock": new_stock}).eq(
-        "id", data.product_id
-    ).execute()
+    # Audit log
+    supabase.table("audit_log").insert({
+        "user_id": user["id"],
+        "action": "internal_use_created",
+        "entity_type": "internal_use",
+        "entity_id": result.data[0]["id"],
+        "old_values": None,
+        "new_values": {
+            "product_id": data.product_id,
+            "quantity": data.quantity,
+            "reason": data.reason,
+        },
+    }).execute()
 
     return result.data[0]
 

@@ -7,15 +7,23 @@ import io
 
 
 def get_daily_summary(date: str, date_from: str = None, date_to: str = None) -> dict:
-    """Get summary for a date or date range.
+    """Get summary for a date or date range (money-flow view).
 
-    Note: this is the *sales analytics* view ("what was sold today, by the
-    payment method the customer originally chose"). For the *cash flow* view
-    ("what money came in today, by channel — including fiado collections"),
-    see ``get_cash_closing_data``.
+    Semantics:
+      - ``total_sales`` — accrual: sum of non-voided sales CREATED in range.
+      - ``by_payment_method.{efectivo,transferencia,datafono}`` — cash flow:
+        money actually received via that channel during the range (from
+        ``sale_payments.paid_at``). Includes fiado settlements that happened
+        in the range and auto-splits mixto sales.
+      - ``by_payment_method.fiado`` — "por cobrar": sum of fiado sales
+        created in range that are still pending now (same as ``fiado_pending``).
+      - ``fiado_pending`` — pending fiado created in range.
+      - ``fiado_settled_in_range`` — fiado sales whose ``paid_at`` lies in
+        range (transparency KPI).
 
-    Mixto sales are distributed into per-method buckets via sale_payments
-    so the by_payment_method view stays meaningful.
+    Note: ``total_sales`` (accrual) and ``sum(by_payment_method)`` (cash flow)
+    need not match exactly — a fiado created on day D and paid on D+5 appears
+    in ``total_sales`` on D and in the ``efectivo`` bucket on D+5.
     """
     if date_from and date_to:
         date_start = f"{date_from}T00:00:00-05:00"
@@ -23,10 +31,10 @@ def get_daily_summary(date: str, date_from: str = None, date_to: str = None) -> 
     else:
         date_start, date_end = date_range_col(date)
 
-    # All sales for the day (non-voided)
+    # Sales created in range (non-voided) — used for total_sales, fiado_pending
     sales = (
         supabase.table("sales")
-        .select("*")
+        .select("id, total, status, payment_method")
         .gte("created_at", date_start)
         .lte("created_at", date_end)
         .neq("status", "voided")
@@ -36,27 +44,41 @@ def get_daily_summary(date: str, date_from: str = None, date_to: str = None) -> 
     total_sales = sum(s["total"] for s in sales.data)
     total_count = len(sales.data)
 
-    by_method = {"efectivo": 0, "transferencia": 0, "datafono": 0, "fiado": 0}
-    fiado_pending = 0
-    mixto_sale_ids = []
-    for s in sales.data:
-        if s["payment_method"] == "mixto":
-            mixto_sale_ids.append(s["id"])
-            continue
-        by_method[s["payment_method"]] = by_method.get(s["payment_method"], 0) + s["total"]
-        if s["status"] == "pending":
-            fiado_pending += s["total"]
+    # Pending fiado created in range (= por cobrar from these sales)
+    fiado_pending = sum(
+        s["total"] for s in sales.data
+        if s["payment_method"] == "fiado" and s["status"] == "pending"
+    )
 
-    # Distribute mixto totals across their component methods
-    if mixto_sale_ids:
-        splits = (
-            supabase.table("sale_payments")
-            .select("payment_method, amount")
-            .in_("sale_id", mixto_sale_ids)
-            .execute()
-        )
-        for sp in splits.data:
-            by_method[sp["payment_method"]] = by_method.get(sp["payment_method"], 0) + sp["amount"]
+    # Money actually received via each channel in range (cash-flow view),
+    # sourced from sale_payments. This captures non-fiado sales (where
+    # paid_at ≈ created_at), mixto splits, and fiado settlements in range.
+    payments_in_range = (
+        supabase.table("sale_payments")
+        .select("payment_method, amount, sales!inner(status)")
+        .gte("paid_at", date_start)
+        .lte("paid_at", date_end)
+        .neq("sales.status", "voided")
+        .execute()
+    )
+    by_method = {"efectivo": 0, "transferencia": 0, "datafono": 0, "fiado": 0}
+    for p in payments_in_range.data:
+        if p["payment_method"] in by_method:
+            by_method[p["payment_method"]] += p["amount"]
+    # Fiado bucket in the money-flow view is the pending balance (por cobrar)
+    by_method["fiado"] = fiado_pending
+
+    # Credit collected in range (fiado sales whose paid_at lies in range)
+    settled = (
+        supabase.table("sales")
+        .select("total")
+        .eq("payment_method", "fiado")
+        .eq("status", "completed")
+        .gte("paid_at", date_start)
+        .lte("paid_at", date_end)
+        .execute()
+    )
+    fiado_settled_in_range = sum(s["total"] for s in settled.data)
 
     # Voided sales count
     voided = (
@@ -115,6 +137,7 @@ def get_daily_summary(date: str, date_from: str = None, date_to: str = None) -> 
         "avg_ticket": avg_ticket,
         "by_payment_method": by_method,
         "fiado_pending": fiado_pending,
+        "fiado_settled_in_range": fiado_settled_in_range,
         "voided_count": voided_count,
         "internal_use_count": internal_count,
         "top_products": top_products,
@@ -197,17 +220,24 @@ def get_cash_closing_data(date: str) -> dict:
         .execute()
     )
 
-    # Snapshot of all currently-pending fiado
-    outstanding = (
+    # Historical snapshot of fiado outstanding at the END of the selected day.
+    # Fetch all fiado sales created on or before date_end and filter in Python
+    # to include only those that were still pending + non-voided by cutoff.
+    fiado_sales = (
         supabase.table("sales")
-        .select("total")
+        .select("total, status, created_at, paid_at, voided_at")
         .eq("payment_method", "fiado")
-        .eq("status", "pending")
+        .lte("created_at", date_end)
         .execute()
+    )
+    cutoff = date_end
+    total_credit_outstanding = sum(
+        s["total"] for s in fiado_sales.data
+        if (s.get("paid_at") is None or s["paid_at"] > cutoff)
+        and not (s["status"] == "voided" and (s.get("voided_at") or "") <= cutoff)
     )
 
     total_credit_issued = sum(s["total"] for s in issued.data if s["status"] != "voided")
-    total_credit_outstanding = sum(s["total"] for s in outstanding.data)
     total_voided = sum(s["total"] for s in voided.data)
     total_money_in = totals["efectivo"] + totals["transferencia"] + totals["datafono"]
 
@@ -286,29 +316,81 @@ def create_cash_closing(data, user: dict) -> dict:
     return result.data[0]
 
 
-def get_top_sellers(period: str, date: str) -> list:
-    """Get top selling products for a period."""
-    dt = datetime.strptime(date, "%Y-%m-%d")
+def get_daily_breakdown(date_from: str, date_to: str) -> list:
+    """Return a per-date breakdown over ``[date_from, date_to]``.
 
-    if period == "day":
-        date_start = f"{date}T00:00:00-05:00"
-        date_end = f"{date}T23:59:59-05:00"
-    elif period == "week":
-        start = dt - timedelta(days=dt.weekday())
-        end = start + timedelta(days=6)
-        date_start = f"{start.strftime('%Y-%m-%d')}T00:00:00-05:00"
-        date_end = f"{end.strftime('%Y-%m-%d')}T23:59:59-05:00"
-    elif period == "month":
-        date_start = f"{dt.strftime('%Y-%m')}-01T00:00:00-05:00"
-        if dt.month == 12:
-            next_month = dt.replace(year=dt.year + 1, month=1, day=1)
-        else:
-            next_month = dt.replace(month=dt.month + 1, day=1)
-        end = next_month - timedelta(days=1)
-        date_end = f"{end.strftime('%Y-%m-%d')}T23:59:59-05:00"
+    Each row: ``{date, total_sales, sales_count, by_payment_method,
+    fiado_pending, fiado_settled_in_range}`` — same semantics as
+    ``get_daily_summary`` for a single day. Includes zero rows for days
+    with no activity so the table is dense.
+    """
+    start = datetime.strptime(date_from, "%Y-%m-%d").date()
+    end = datetime.strptime(date_to, "%Y-%m-%d").date()
+    if end < start:
+        raise HTTPException(
+            status_code=400,
+            detail="date_to debe ser mayor o igual a date_from",
+        )
+    # Cap the span to avoid runaway loops; months of data is the expected use.
+    span_days = (end - start).days
+    if span_days > 366:
+        raise HTTPException(
+            status_code=400,
+            detail="El rango no puede superar 366 días",
+        )
+
+    rows = []
+    current = start
+    while current <= end:
+        day_str = current.strftime("%Y-%m-%d")
+        summary = get_daily_summary(day_str)
+        rows.append({
+            "date": day_str,
+            "total_sales": summary["total_sales"],
+            "sales_count": summary["total_sales_count"],
+            "by_payment_method": summary["by_payment_method"],
+            "fiado_pending": summary["fiado_pending"],
+            "fiado_settled_in_range": summary["fiado_settled_in_range"],
+        })
+        current += timedelta(days=1)
+    return rows
+
+
+def get_top_sellers(
+    period: str,
+    date: str,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list:
+    """Get top selling products for a period or explicit range.
+
+    When ``date_from`` and ``date_to`` are both provided they override the
+    ``period`` computation — used by the "Rango" tab in the frontend.
+    """
+    if date_from and date_to:
+        date_start = f"{date_from}T00:00:00-05:00"
+        date_end = f"{date_to}T23:59:59-05:00"
     else:
-        date_start = f"{date}T00:00:00-05:00"
-        date_end = f"{date}T23:59:59-05:00"
+        dt = datetime.strptime(date, "%Y-%m-%d")
+        if period == "day":
+            date_start = f"{date}T00:00:00-05:00"
+            date_end = f"{date}T23:59:59-05:00"
+        elif period == "week":
+            start = dt - timedelta(days=dt.weekday())
+            end = start + timedelta(days=6)
+            date_start = f"{start.strftime('%Y-%m-%d')}T00:00:00-05:00"
+            date_end = f"{end.strftime('%Y-%m-%d')}T23:59:59-05:00"
+        elif period == "month":
+            date_start = f"{dt.strftime('%Y-%m')}-01T00:00:00-05:00"
+            if dt.month == 12:
+                next_month = dt.replace(year=dt.year + 1, month=1, day=1)
+            else:
+                next_month = dt.replace(month=dt.month + 1, day=1)
+            end = next_month - timedelta(days=1)
+            date_end = f"{end.strftime('%Y-%m-%d')}T23:59:59-05:00"
+        else:
+            date_start = f"{date}T00:00:00-05:00"
+            date_end = f"{date}T23:59:59-05:00"
 
     sale_items = (
         supabase.table("sale_items")
@@ -373,7 +455,19 @@ def get_inventory_value() -> dict:
 
 
 def get_reconciliation(date_from: str, date_to: str) -> list:
-    """Get stock reconciliation report."""
+    """Per-product movement summary over a date range.
+
+    Columns:
+      - total_sold / total_entered / total_internal_use — movements in range
+      - total_adjustments — sum of ``stock_adjustments.difference`` in range
+        (positive = found stock; negative = shrinkage)
+      - actual_stock — current value of products.stock
+      - expected_stock — what stock would be if no manual adjustments were
+        recorded (``actual_stock - total_adjustments``)
+      - difference — equals ``total_adjustments`` so the column reads "how
+        much of the current stock is unexplained by movements alone". Zero
+        when no physical counts were entered in the range.
+    """
     date_start = f"{date_from}T00:00:00-05:00"
     date_end = f"{date_to}T23:59:59-05:00"
 
@@ -423,22 +517,19 @@ def get_reconciliation(date_from: str, date_to: str) -> list:
         )
         total_used = sum(u["quantity"] for u in uses.data)
 
-        # Expected stock = actual + sold + used - entered (working backwards)
-        expected_stock = actual_stock + total_sold + total_used - total_entered
-        # Actually: expected = opening + entries - sales - internal_use
-        # Since we don't have opening stock, we compute: expected current = actual
-        # The difference represents unexplained discrepancies
-        # Better approach: expected_change = entries - sales - internal_use
-        # expected_stock = opening + expected_change
-        # Since opening is unknown, compare: actual vs (actual + sold + used - entered) which equals opening
-        # Let's just show expected vs actual where expected = opening + entries - sales - uses
-        # and opening = actual - entries + sales + uses (from current backwards)
-        # So expected should equal actual if no discrepancies.
-        # The discrepancy = 0 if all movements are accounted for.
+        # Stock adjustments in period
+        adjustments = (
+            supabase.table("stock_adjustments")
+            .select("difference")
+            .eq("product_id", p["id"])
+            .gte("adjusted_at", date_start)
+            .lte("adjusted_at", date_end)
+            .execute()
+        )
+        total_adjustments = sum(a["difference"] for a in adjustments.data)
 
-        # Simplified: just show the movements summary
-        expected = actual_stock  # If all movements tracked, expected = actual
-        difference = 0  # Would only differ if manual stock adjustments happened
+        expected_stock = actual_stock - total_adjustments
+        difference = total_adjustments
 
         reconciliation.append({
             "product_id": p["id"],
@@ -446,7 +537,8 @@ def get_reconciliation(date_from: str, date_to: str) -> list:
             "total_sold": total_sold,
             "total_entered": total_entered,
             "total_internal_use": total_used,
-            "expected_stock": expected,
+            "total_adjustments": total_adjustments,
+            "expected_stock": expected_stock,
             "actual_stock": actual_stock,
             "difference": difference,
         })
@@ -454,17 +546,30 @@ def get_reconciliation(date_from: str, date_to: str) -> list:
     return reconciliation
 
 
-def get_fiado_aging() -> dict:
-    """Get fiado (open accounts) aging breakdown."""
-    pending = (
+def get_fiado_aging(as_of: str | None = None) -> dict:
+    """Fiado (por cobrar) aging breakdown.
+
+    When ``as_of`` is provided, the buckets reflect the state at the end of
+    that date — i.e., fiados outstanding at that cutoff, aged from that
+    cutoff. When omitted, uses the current moment (live snapshot).
+    """
+    if as_of:
+        cutoff = datetime.strptime(as_of, "%Y-%m-%d").replace(
+            hour=23, minute=59, second=59, tzinfo=COL_TZ
+        )
+    else:
+        cutoff = col_now()
+
+    cutoff_iso = cutoff.isoformat()
+
+    fiado_sales = (
         supabase.table("sales")
-        .select("id, total, created_at, client_name")
-        .eq("status", "pending")
+        .select("id, total, created_at, client_name, status, paid_at, voided_at")
         .eq("payment_method", "fiado")
+        .lte("created_at", cutoff_iso)
         .execute()
     )
 
-    now = col_now()
     buckets = {
         "< 3 días": {"count": 0, "total": 0},
         "3-7 días": {"count": 0, "total": 0},
@@ -472,10 +577,17 @@ def get_fiado_aging() -> dict:
     }
 
     total_owed = 0
-    for sale in pending.data:
+    for sale in fiado_sales.data:
+        # Skip if already settled at cutoff
+        if sale.get("paid_at") and sale["paid_at"] <= cutoff_iso:
+            continue
+        # Skip if voided at cutoff
+        if sale["status"] == "voided" and (sale.get("voided_at") or "") <= cutoff_iso:
+            continue
+
         total_owed += sale["total"]
         created = datetime.fromisoformat(sale["created_at"].replace("Z", "+00:00"))
-        days = (now - created).days
+        days = (cutoff - created).days
 
         if days < 3:
             buckets["< 3 días"]["count"] += 1
@@ -489,7 +601,7 @@ def get_fiado_aging() -> dict:
 
     return {
         "total_owed": total_owed,
-        "total_count": len(pending.data),
+        "total_count": sum(b["count"] for b in buckets.values()),
         "buckets": [
             {"label": label, "count": data["count"], "total": data["total"]}
             for label, data in buckets.items()

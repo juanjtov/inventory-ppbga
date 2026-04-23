@@ -20,6 +20,7 @@ import UsersPage from './pages/UsersPage';
 import AlertsPage from './pages/AlertsPage';
 import SalesHistoryPage from './pages/SalesHistoryPage';
 import ProductMovementsPage from './pages/ProductMovementsPage';
+import StockAdjustmentsPage from './pages/StockAdjustmentsPage';
 
 function App() {
   useKeepAlive();
@@ -40,6 +41,7 @@ function App() {
 
                 <Route path="/inventario/ingreso" element={<RoleGuard roles={['owner','admin']}><InventoryEntryPage /></RoleGuard>} />
                 <Route path="/inventario/uso-interno" element={<RoleGuard roles={['owner','admin']}><InternalUsePage /></RoleGuard>} />
+                <Route path="/inventario/ajustes" element={<RoleGuard roles={['owner']}><StockAdjustmentsPage /></RoleGuard>} />
                 <Route path="/corte-caja" element={<RoleGuard roles={['owner','admin']}><CashClosingPage /></RoleGuard>} />
                 <Route path="/ventas" element={<RoleGuard roles={['owner','admin']}><SalesHistoryPage /></RoleGuard>} />
                 <Route path="/inventario/movimientos/:productId" element={<RoleGuard roles={['owner','admin']}><ProductMovementsPage /></RoleGuard>} />

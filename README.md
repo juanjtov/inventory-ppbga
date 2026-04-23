@@ -32,13 +32,25 @@ inventorypp/
 
 ### 1. Base de datos (Supabase)
 
-1. Crear proyecto en [Supabase](https://supabase.com)
-2. Ejecutar `supabase/migrations/001_initial_schema.sql` en el SQL Editor
-3. Habilitar Realtime en la tabla `products`
-4. Crear el primer usuario owner:
-   - En Supabase Auth: crear usuario con email/password
-   - En la tabla `users`: insertar fila con `auth_id` = ID del auth user, `role = 'owner'`
-5. Anotar: URL, anon key, service role key
+Esta seccion describe como crear un nuevo entorno desde cero. Para el flujo de
+trabajo dev/prod ya separado, ver la seccion [Entornos Dev / Prod](#entornos-dev--prod) abajo.
+
+1. Crear proyecto en [Supabase](https://supabase.com) (recomendado: nombrarlo `inventorypp-dev` para uso local)
+2. Aplicar las migraciones con el script:
+   ```bash
+   TARGET_DATABASE_URL='postgresql://postgres:pwd@db.<ref>.supabase.co:5432/postgres?sslmode=require' \
+     ./scripts/apply_migrations.sh
+   ```
+   Esto ejecuta todo `supabase/migrations/*.sql` en orden lexico.
+3. Habilitar Realtime en la tabla `products` (la migracion 001 ya lo hace via `ALTER PUBLICATION`)
+4. Crear el primer usuario owner con el script:
+   ```bash
+   DEV_SUPABASE_URL='https://<ref>.supabase.co' \
+   DEV_SUPABASE_SECRET_KEY='sb_secret_...' \
+   DEV_DATABASE_URL='postgresql://postgres:pwd@db.<ref>.supabase.co:5432/postgres?sslmode=require' \
+     ./scripts/create_dev_owner.sh
+   ```
+5. Anotar: URL, publishable key, secret key, project ref
 
 ### 2. Backend
 
@@ -83,7 +95,8 @@ npm run dev
 
 ### 4. Tests
 
-Los tests corren contra una instancia real de Supabase. Requieren el backend corriendo:
+Los tests corren contra el proyecto Supabase de **dev** (`inventorypp-dev`),
+nunca contra prod. El backend debe estar corriendo localmente:
 
 ```bash
 cd backend
@@ -92,8 +105,36 @@ pytest tests/ -v
 ```
 
 Variables necesarias para tests:
-- `TEST_OWNER_EMAIL` — email del owner de prueba
+- `TEST_OWNER_EMAIL` — email del owner de prueba (creado via `scripts/create_dev_owner.sh`)
 - `TEST_OWNER_PASSWORD` — password del owner de prueba
+
+## Entornos Dev / Prod
+
+El proyecto usa **dos proyectos Supabase separados**:
+
+| Entorno | Donde | Credenciales |
+|---------|-------|--------------|
+| **Dev** (`inventorypp-dev`) | Local (laptop) | `backend/.env`, `frontend/.env` |
+| **Prod** (Premier Padel BGA real) | Koyeb + Vercel | Variables en los dashboards de Koyeb y Vercel |
+
+**Reglas:**
+
+- Local siempre apunta a dev. Tus archivos `backend/.env` y `frontend/.env`
+  contienen URL y keys del proyecto `inventorypp-dev`.
+- Las credenciales de prod **nunca** estan en el repo, ni en `.env`, ni en
+  ningun archivo del proyecto. Viven solo en los dashboards de Koyeb y Vercel.
+- El backend imprime un log al inicio con el project ref de Supabase
+  (`Supabase project: <ref>`) para que cualquier configuracion errada sea
+  inmediatamente visible.
+
+**Operaciones de base de datos** estan en `scripts/` — backup, restore,
+aplicar migraciones, crear owner. Ver [`scripts/README.md`](scripts/README.md)
+para el detalle completo, incluyendo como guardar la URL de prod en el
+Keychain de macOS de forma segura.
+
+> **Aviso de seguridad:** las variables `VITE_*` se compilan dentro del
+> bundle de frontend en tiempo de build y son publicamente visibles. Solo
+> usar publishable keys ahi, jamas el secret key.
 
 ## Deployment
 

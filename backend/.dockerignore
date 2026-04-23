@@ -1,0 +1,15 @@
+# Defense-in-depth: keep local dev artifacts and secrets out of Docker images.
+# The current Dockerfile only COPYs backend/app/, but this prevents footguns
+# if someone later changes it to COPY backend/ . or similar.
+
+.env
+.env.*
+venv/
+.venv/
+tests/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store

@@ -5,6 +5,7 @@ from app.auth import get_current_user, require_role
 from app.models.cash_closing import CashClosingCreate
 from app.services.report_service import (
     get_daily_summary,
+    get_daily_breakdown,
     get_cash_closing_data,
     create_cash_closing,
     get_top_sellers,
@@ -29,6 +30,24 @@ async def daily_summary(
     except Exception:
         raise HTTPException(
             status_code=500, detail="Error al obtener el resumen diario"
+        )
+    return data
+
+
+@router.get("/daily-breakdown")
+async def daily_breakdown(
+    date_from: str = Query(..., description="Fecha inicio (YYYY-MM-DD)"),
+    date_to: str = Query(..., description="Fecha fin (YYYY-MM-DD)"),
+    user=Depends(require_role("owner")),
+):
+    try:
+        data = get_daily_breakdown(date_from, date_to)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="Error al obtener el detalle diario",
         )
     return data
 
@@ -67,18 +86,25 @@ async def cash_closing_create(
 @router.get("/top-sellers")
 async def top_sellers(
     period: str = Query(
-        ..., description="Periodo: day, week o month"
+        ..., description="Periodo: day, week, month o range"
     ),
     date: str = Query(..., description="Fecha en formato YYYY-MM-DD"),
+    date_from: Optional[str] = Query(None, description="Inicio rango (solo period=range)"),
+    date_to: Optional[str] = Query(None, description="Fin rango (solo period=range)"),
     user=Depends(require_role("owner")),
 ):
-    if period not in ("day", "week", "month"):
+    if period not in ("day", "week", "month", "range"):
         raise HTTPException(
             status_code=400,
-            detail="Periodo no válido. Use: day, week o month",
+            detail="Periodo no válido. Use: day, week, month o range",
+        )
+    if period == "range" and not (date_from and date_to):
+        raise HTTPException(
+            status_code=400,
+            detail="period=range requiere date_from y date_to",
         )
     try:
-        data = get_top_sellers(period, date)
+        data = get_top_sellers(period, date, date_from=date_from, date_to=date_to)
     except Exception:
         raise HTTPException(
             status_code=500,
@@ -123,10 +149,11 @@ async def reconciliation(
 
 @router.get("/fiado-aging")
 async def fiado_aging(
+    as_of: Optional[str] = Query(None, description="Fecha de referencia (YYYY-MM-DD). Omite para snapshot actual."),
     user=Depends(require_role("owner")),
 ):
     try:
-        data = get_fiado_aging()
+        data = get_fiado_aging(as_of=as_of)
     except Exception:
         raise HTTPException(
             status_code=500,

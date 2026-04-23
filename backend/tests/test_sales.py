@@ -199,6 +199,111 @@ def test_get_sale_detail(client, auth_headers, test_product_id):
     assert len(data["items"]) >= 1
 
 
+def test_sales_summary_basic(client, auth_headers):
+    """/sales/summary returns the four cards, regardless of result count."""
+    from datetime import date
+
+    today = date.today().isoformat()
+    res = client.get(
+        "/api/v1/sales/summary",
+        params={"date_from": today, "date_to": today},
+        headers=auth_headers,
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert set(data.keys()) == {
+        "total_count",
+        "total_amount",
+        "voided_count",
+        "fiado_pending",
+    }
+    assert data["total_amount"] >= 0
+
+
+def test_sales_summary_beyond_page_size(
+    client, auth_headers, test_product_id
+):
+    """Summary counts and totals cover ALL matching sales, not just the
+    first 20 that /sales returns on a single page."""
+    from datetime import date
+
+    today = date.today().isoformat()
+    marker_client = f"__test_summary_{int(time.time())}__"
+
+    baseline = client.get(
+        "/api/v1/sales/summary",
+        params={"date_from": today, "date_to": today},
+        headers=auth_headers,
+    ).json()
+
+    # Create 25 small sales so we exceed the /sales default page of 20
+    sale_ids = []
+    try:
+        for _ in range(25):
+            res = client.post(
+                "/api/v1/sales",
+                json={
+                    "items": [{"product_id": test_product_id, "quantity": 1}],
+                    "payment_method": "efectivo",
+                    "notes": marker_client,
+                },
+                headers=auth_headers,
+            )
+            assert res.status_code == 200, res.text
+            sale_ids.append(res.json()["id"])
+
+        after = client.get(
+            "/api/v1/sales/summary",
+            params={"date_from": today, "date_to": today},
+            headers=auth_headers,
+        ).json()
+        assert after["total_count"] >= baseline["total_count"] + 25
+        assert after["total_amount"] >= baseline["total_amount"] + 25 * 1  # prices > 0
+    finally:
+        for sid in sale_ids:
+            client.post(
+                f"/api/v1/sales/{sid}/void",
+                json={"reason": marker_client},
+                headers=auth_headers,
+            )
+
+
+def test_sales_summary_respects_filters(client, auth_headers, test_product_id):
+    """status=voided returns only voided totals."""
+    from datetime import date
+
+    today = date.today().isoformat()
+    marker = f"__test_summary_filt_{int(time.time())}__"
+
+    # Create + void a sale
+    create_res = client.post(
+        "/api/v1/sales",
+        json={
+            "items": [{"product_id": test_product_id, "quantity": 1}],
+            "payment_method": "efectivo",
+            "notes": marker,
+        },
+        headers=auth_headers,
+    )
+    assert create_res.status_code == 200, create_res.text
+    sale_id = create_res.json()["id"]
+    client.post(
+        f"/api/v1/sales/{sale_id}/void",
+        json={"reason": marker},
+        headers=auth_headers,
+    )
+
+    voided_summary = client.get(
+        "/api/v1/sales/summary",
+        params={"date_from": today, "date_to": today, "status": "voided"},
+        headers=auth_headers,
+    ).json()
+    # total_amount excludes voided sales by semantic, so it can be 0 even though
+    # total_count > 0 when only voided sales match
+    assert voided_summary["voided_count"] >= 1
+    assert voided_summary["total_amount"] == 0
+
+
 def test_cannot_oversell(client, auth_headers, test_category_id, test_supplier_id):
     """Cannot sell more than available stock."""
     # Create a product with stock=1

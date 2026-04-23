@@ -40,5 +40,20 @@ __pycache__/
 venv/
 .venv/
 
+# Database backups (defense-in-depth; backups live outside repo by default)
+*.dump
+*.sql.gz
+*.backup
+*.rowcounts.txt
+
+# Supabase CLI internals
+supabase/.temp/
+
+# Environment variant files (prod secrets must never land in the repo)
+.env.prod
+.env.prod.*
+backend/.env.*
+frontend/.env.*
+
 # Project-specific
 /docs

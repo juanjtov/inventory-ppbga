@@ -75,24 +75,26 @@ export default function SalesHistoryPage() {
   const fetchSales = useCallback(async (newOffset = 0) => {
     setLoading(true);
     try {
-      const params = {
+      const listParams = {
         date_from: dateFrom,
         date_to: dateTo,
         limit: LIMIT,
         offset: newOffset,
       };
-      if (status) params.status = status;
-      if (paymentMethod) params.payment_method = paymentMethod;
+      if (status) listParams.status = status;
+      if (paymentMethod) listParams.payment_method = paymentMethod;
 
-      const res = await api.get('/sales', { params });
-      const salesData = Array.isArray(res.data) ? res.data : (res.data.sales ?? res.data.items ?? []);
+      const summaryParams = { date_from: dateFrom, date_to: dateTo };
+      if (status) summaryParams.status = status;
+      if (paymentMethod) summaryParams.payment_method = paymentMethod;
+
+      const [listRes, summaryRes] = await Promise.all([
+        api.get('/sales', { params: listParams }),
+        api.get('/sales/summary', { params: summaryParams }),
+      ]);
+      const salesData = Array.isArray(listRes.data) ? listRes.data : (listRes.data.sales ?? listRes.data.items ?? []);
       setSales(salesData);
-      // Compute summary client-side
-      const total_count = salesData.length;
-      const total_amount = salesData.filter(s => s.status !== 'voided').reduce((sum, s) => sum + s.total, 0);
-      const voided_count = salesData.filter(s => s.status === 'voided').length;
-      const fiado_pending = salesData.filter(s => s.status === 'pending').reduce((sum, s) => sum + s.total, 0);
-      setSummary({ total_count, total_amount, voided_count, fiado_pending });
+      setSummary(summaryRes.data);
       setHasMore(salesData.length === LIMIT);
       setOffset(newOffset);
     } catch {

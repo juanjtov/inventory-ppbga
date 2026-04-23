@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Download, DollarSign, Receipt, CreditCard, Clock, Package, AlertTriangle, PackageMinus } from 'lucide-react';
+import { Download, DollarSign, Receipt, CreditCard, Clock, Package, AlertTriangle, PackageMinus, Banknote, ArrowRightLeft, TrendingUp } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import api from '../api/client';
 import { useToast } from '../contexts/ToastContext';
@@ -8,13 +8,16 @@ import { todayStr } from '../lib/dateUtils';
 import Spinner from '../components/ui/Spinner';
 
 const TABS = ['Ventas', 'Inventario', 'Reconciliacion'];
-const PERIODS = ['Dia', 'Semana', 'Mes'];
-const PERIOD_MAP = { dia: 'day', semana: 'week', mes: 'month' };
+const PERIODS = ['Dia', 'Semana', 'Mes', 'Rango'];
+const PERIOD_MAP = { dia: 'day', semana: 'week', mes: 'month', rango: 'range' };
 const FIADO_COLORS = ['#facc15', '#f97316', '#ef4444'];
 
-function getDateRange(period, date) {
-  const d = new Date(date + 'T12:00:00');
+function getDateRange(period, date, dateFrom, dateTo) {
   const mapped = PERIOD_MAP[period.toLowerCase()] || 'day';
+  if (mapped === 'range') {
+    return { date_from: dateFrom, date_to: dateTo };
+  }
+  const d = new Date(date + 'T12:00:00');
   if (mapped === 'day') {
     return { date_from: date, date_to: date };
   } else if (mapped === 'week') {
@@ -66,38 +69,51 @@ function VentasTab() {
   const { addToast } = useToast();
   const [period, setPeriod] = useState('Dia');
   const [date, setDate] = useState(todayStr());
+  const [dateFrom, setDateFrom] = useState(todayStr());
+  const [dateTo, setDateTo] = useState(todayStr());
   const [kpis, setKpis] = useState(null);
   const [topSellers, setTopSellers] = useState([]);
   const [fiadoAging, setFiadoAging] = useState(null);
+  const [dailyBreakdown, setDailyBreakdown] = useState([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+
+  const isRange = period === 'Rango';
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const mappedPeriod = PERIOD_MAP[period.toLowerCase()] || 'day';
-      const range = getDateRange(period, date);
-      const [summaryRes, topRes, fiadoRes] = await Promise.all([
+      const range = getDateRange(period, date, dateFrom, dateTo);
+      const topSellersParams = isRange
+        ? { period: 'range', date: range.date_from, date_from: range.date_from, date_to: range.date_to }
+        : { period: mappedPeriod, date };
+      const requests = [
         api.get('/reports/daily-summary', { params: { date, date_from: range.date_from, date_to: range.date_to } }),
-        api.get('/reports/top-sellers', { params: { period: mappedPeriod, date } }),
-        api.get('/reports/fiado-aging'),
-      ]);
-      setKpis(summaryRes.data);
-      setTopSellers(topRes.data);
-      setFiadoAging(fiadoRes.data);
+        api.get('/reports/top-sellers', { params: topSellersParams }),
+        api.get('/reports/fiado-aging', { params: { as_of: range.date_to } }),
+      ];
+      if (isRange) {
+        requests.push(api.get('/reports/daily-breakdown', { params: { date_from: range.date_from, date_to: range.date_to } }));
+      }
+      const responses = await Promise.all(requests);
+      setKpis(responses[0].data);
+      setTopSellers(responses[1].data);
+      setFiadoAging(responses[2].data);
+      setDailyBreakdown(isRange ? responses[3].data : []);
     } catch {
       addToast('Error al cargar reportes de ventas', 'error');
     } finally {
       setLoading(false);
     }
-  }, [period, date, addToast]);
+  }, [period, date, dateFrom, dateTo, isRange, addToast]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const handleExport = async () => {
     setExporting(true);
     try {
-      const range = getDateRange(period, date);
+      const range = getDateRange(period, date, dateFrom, dateTo);
       const res = await api.get('/reports/export/sales', {
         params: range,
         responseType: 'blob',
@@ -126,6 +142,7 @@ function VentasTab() {
   }));
 
   const fiadoBuckets = fiadoAging?.buckets || [];
+  const byMethod = kpis?.by_payment_method || {};
 
   return (
     <div className="space-y-8">
@@ -144,12 +161,36 @@ function VentasTab() {
             </button>
           ))}
         </div>
-        <input
-          type="date"
-          value={date}
-          onChange={e => setDate(e.target.value)}
-          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-premier-700 focus:border-premier-700 outline-none"
-        />
+        {!isRange && (
+          <input
+            type="date"
+            value={date}
+            onChange={e => setDate(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-premier-700 focus:border-premier-700 outline-none"
+          />
+        )}
+        {isRange && (
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500">Desde</label>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={e => setDateFrom(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-premier-700 focus:border-premier-700 outline-none"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500">Hasta</label>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={e => setDateTo(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-premier-700 focus:border-premier-700 outline-none"
+              />
+            </div>
+          </div>
+        )}
         <button
           onClick={handleExport}
           disabled={exporting}
@@ -160,18 +201,65 @@ function VentasTab() {
         </button>
       </div>
 
-      {/* KPI Cards */}
+      {/* KPI Cards — top row: headline numbers */}
       {kpis && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard icon={DollarSign} label="Total ventas" value={formatCOP(kpis.total_sales ?? 0)} />
-          <KpiCard icon={Receipt} label="Ticket promedio" value={formatCOP(kpis.avg_ticket ?? 0)} />
-          <KpiCard icon={CreditCard} label="Por metodo de pago" value={
-            kpis.by_payment_method
-              ? Object.entries(kpis.by_payment_method).map(([m, v]) => `${m}: ${formatCOP(v)}`).join(', ')
-              : '-'
-          } />
-          <KpiCard icon={Clock} label="Por cobrar pendiente" value={formatCOP(kpis.fiado_pending ?? 0)} accent />
-          <KpiCard icon={PackageMinus} label="Uso interno" value={kpis.internal_use_count ?? 0} />
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <KpiCard icon={DollarSign} label="Total ventas" value={formatCOP(kpis.total_sales ?? 0)} />
+            <KpiCard icon={Receipt} label="Ticket promedio" value={formatCOP(kpis.avg_ticket ?? 0)} />
+            <KpiCard icon={Clock} label="Por cobrar" value={formatCOP(kpis.fiado_pending ?? 0)} accent />
+            <KpiCard icon={TrendingUp} label="Cobrado de fiado" value={formatCOP(kpis.fiado_settled_in_range ?? 0)} subtitle="Fiados liquidados en el rango" />
+          </div>
+
+          {/* KPI Cards — cash-flow by method */}
+          <div>
+            <p className="text-xs text-gray-500 mb-2">Dinero recibido por canal — incluye fiados cobrados en el rango</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <KpiCard icon={Banknote} label="Efectivo" value={formatCOP(byMethod.efectivo ?? 0)} />
+              <KpiCard icon={CreditCard} label="Datáfono" value={formatCOP(byMethod.datafono ?? 0)} />
+              <KpiCard icon={ArrowRightLeft} label="Transferencia" value={formatCOP(byMethod.transferencia ?? 0)} />
+              <KpiCard icon={PackageMinus} label="Uso interno" value={kpis.internal_use_count ?? 0} />
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Per-day breakdown (only visible when Rango is active) */}
+      {isRange && dailyBreakdown.length > 0 && (
+        <div className="bg-white rounded-2xl shadow-md overflow-hidden">
+          <div className="px-6 py-4 border-b">
+            <h3 className="font-semibold text-gray-900">Detalle por día</h3>
+            <p className="text-xs text-gray-500 mt-1">Un registro por fecha con total de ventas y desglose por canal de cobro.</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 text-gray-500 text-left">
+                <tr>
+                  <th className="px-6 py-3 font-medium">Fecha</th>
+                  <th className="px-6 py-3 font-medium text-right">Ventas</th>
+                  <th className="px-6 py-3 font-medium text-right">Efectivo</th>
+                  <th className="px-6 py-3 font-medium text-right">Datáfono</th>
+                  <th className="px-6 py-3 font-medium text-right">Transferencia</th>
+                  <th className="px-6 py-3 font-medium text-right">Por cobrar</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {[...dailyBreakdown].sort((a, b) => b.date.localeCompare(a.date)).map(row => {
+                  const m = row.by_payment_method || {};
+                  return (
+                    <tr key={row.date} className="hover:bg-gray-50">
+                      <td className="px-6 py-3 font-medium text-gray-900">{row.date}</td>
+                      <td className="px-6 py-3 text-right">{formatCOP(row.total_sales ?? 0)}</td>
+                      <td className="px-6 py-3 text-right text-gray-700">{formatCOP(m.efectivo ?? 0)}</td>
+                      <td className="px-6 py-3 text-right text-gray-700">{formatCOP(m.datafono ?? 0)}</td>
+                      <td className="px-6 py-3 text-right text-gray-700">{formatCOP(m.transferencia ?? 0)}</td>
+                      <td className="px-6 py-3 text-right text-yellow-700">{formatCOP(row.fiado_pending ?? 0)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -245,7 +333,7 @@ function VentasTab() {
   );
 }
 
-function KpiCard({ icon: Icon, label, value, accent }) {
+function KpiCard({ icon: Icon, label, value, accent, subtitle }) {
   return (
     <div className={`bg-white rounded-2xl shadow-md p-5 ${accent ? 'border-l-4 border-yellow-400' : ''}`}>
       <div className="flex items-center gap-3 mb-2">
@@ -255,6 +343,7 @@ function KpiCard({ icon: Icon, label, value, accent }) {
         <span className="text-sm text-gray-500">{label}</span>
       </div>
       <p className="text-lg font-bold text-gray-900 break-words">{value}</p>
+      {subtitle && <p className="text-xs text-gray-400 mt-1">{subtitle}</p>}
     </div>
   );
 }
@@ -386,6 +475,7 @@ function ReconciliacionTab() {
                   <th className="px-6 py-3 font-medium text-right hidden md:table-cell">Vendido</th>
                   <th className="px-6 py-3 font-medium text-right hidden md:table-cell">Ingresado</th>
                   <th className="px-6 py-3 font-medium text-right hidden lg:table-cell">Uso Interno</th>
+                  <th className="px-6 py-3 font-medium text-right hidden lg:table-cell">Ajustes</th>
                   <th className="px-6 py-3 font-medium text-right hidden md:table-cell">Stock Esperado</th>
                   <th className="px-6 py-3 font-medium text-right">Stock Actual</th>
                   <th className="px-6 py-3 font-medium text-right">Diferencia</th>
@@ -393,21 +483,30 @@ function ReconciliacionTab() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {data.map(r => (
-                  <tr key={r.product_id ?? r.name} className={`hover:bg-gray-50 ${r.difference !== 0 ? 'bg-red-50' : ''}`}>
+                  <tr key={r.product_id ?? r.name} className={`hover:bg-gray-50 ${r.difference !== 0 ? 'bg-yellow-50' : ''}`}>
                     <td className="px-6 py-3 font-medium text-gray-900">{r.name}</td>
                     <td className="px-6 py-3 text-right hidden md:table-cell">{r.total_sold}</td>
                     <td className="px-6 py-3 text-right hidden md:table-cell">{r.total_entered}</td>
                     <td className="px-6 py-3 text-right hidden lg:table-cell">{r.total_internal_use}</td>
+                    <td className={`px-6 py-3 text-right hidden lg:table-cell ${
+                      (r.total_adjustments ?? 0) < 0 ? 'text-red-600' :
+                      (r.total_adjustments ?? 0) > 0 ? 'text-yellow-700' : ''
+                    }`}>
+                      {r.total_adjustments ?? 0}
+                    </td>
                     <td className="px-6 py-3 text-right hidden md:table-cell">{r.expected_stock}</td>
                     <td className="px-6 py-3 text-right">{r.actual_stock}</td>
-                    <td className={`px-6 py-3 text-right font-semibold ${r.difference !== 0 ? 'text-red-600' : 'text-green-600'}`}>
-                      {r.difference}
+                    <td className={`px-6 py-3 text-right font-semibold ${
+                      r.difference === 0 ? 'text-green-600' :
+                      r.difference < 0 ? 'text-red-600' : 'text-yellow-700'
+                    }`}>
+                      {r.difference > 0 ? `+${r.difference}` : r.difference}
                     </td>
                   </tr>
                 ))}
                 {data.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-6 py-12 text-center text-gray-400">
+                    <td colSpan={8} className="px-6 py-12 text-center text-gray-400">
                       No hay datos para el rango seleccionado
                     </td>
                   </tr>
